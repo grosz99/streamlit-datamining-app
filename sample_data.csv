@@ -1,0 +1,16 @@
+id,age,salary,department,experience,performance_score
+1,32,55000,Sales,,4.2
+2,28,48000,Marketing,3,
+3,,62000,Engineering,5,4.5
+4,41,75000,Sales,12,4.8
+5,35,,Marketing,7,4.1
+6,29,51000,Engineering,,3.9
+7,38,68000,Sales,9,
+8,,57000,Marketing,4,4.3
+9,33,59000,Engineering,6,4.6
+10,36,63000,,8,4.4
+11,31,54000,Sales,5,
+12,40,,Engineering,10,4.7
+13,34,61000,Marketing,,4.2
+14,37,66000,Sales,8,4.5
+15,30,52000,Engineering,4,
