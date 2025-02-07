@@ -156,3 +156,82 @@ def get_correlation_candidates(df, target_column):
     correlations.sort(key=lambda x: x[1], reverse=True)
     
     return correlations
+
+def get_data_profile(df, original_df=None):
+    """
+    Generate a comprehensive profile of the dataset, comparing with original if provided.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        Current dataset to profile
+    original_df : pandas.DataFrame, optional
+        Original dataset to compare with
+        
+    Returns:
+    --------
+    dict : Profile information including data types, missing values, and cleaning status
+    """
+    profile = {}
+    
+    for column in df.columns:
+        col_info = {
+            'data_type': str(df[column].dtype),
+            'unique_values': df[column].nunique(),
+            'missing_values': df[column].isnull().sum(),
+            'missing_percentage': (df[column].isnull().sum() / len(df)) * 100,
+            'needs_cleaning': df[column].isnull().any(),
+        }
+        
+        # Add basic statistics for numeric columns
+        if pd.api.types.is_numeric_dtype(df[column]):
+            col_info.update({
+                'mean': df[column].mean() if not df[column].isnull().all() else None,
+                'std': df[column].std() if not df[column].isnull().all() else None,
+                'min': df[column].min() if not df[column].isnull().all() else None,
+                'max': df[column].max() if not df[column].isnull().all() else None
+            })
+        
+        # Compare with original dataset if provided
+        if original_df is not None and column in original_df.columns:
+            orig_missing = original_df[column].isnull().sum()
+            col_info['cleaning_status'] = {
+                'original_missing': orig_missing,
+                'current_missing': col_info['missing_values'],
+                'values_cleaned': orig_missing - col_info['missing_values'],
+                'is_fully_cleaned': col_info['missing_values'] == 0,
+                'cleaning_percentage': ((orig_missing - col_info['missing_values']) / orig_missing * 100) if orig_missing > 0 else 100
+            }
+        
+        profile[column] = col_info
+    
+    return profile
+
+def format_profile_for_display(profile):
+    """
+    Format the profile data for display in Streamlit
+    """
+    display_data = []
+    
+    for column, info in profile.items():
+        row = {
+            'Column': column,
+            'Data Type': info['data_type'],
+            'Unique Values': info['unique_values'],
+            'Missing Values': info['missing_values'],
+            'Missing %': f"{info['missing_percentage']:.2f}%",
+            'Needs Cleaning': '✗' if info['needs_cleaning'] else '✓'
+        }
+        
+        # Add cleaning status if available
+        if 'cleaning_status' in info:
+            status = info['cleaning_status']
+            row.update({
+                'Values Cleaned': status['values_cleaned'],
+                'Cleaning Progress': f"{status['cleaning_percentage']:.2f}%",
+                'Status': '✓ Fully Cleaned' if status['is_fully_cleaned'] else '⚠ Needs Cleaning'
+            })
+        
+        display_data.append(row)
+    
+    return pd.DataFrame(display_data)

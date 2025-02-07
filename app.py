@@ -2,12 +2,21 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from utils.data_cleaning import handle_missing_values, handle_outliers, get_correlation_candidates
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from utils.data_cleaning import (
+    handle_missing_values, get_correlation_candidates,
+    get_data_profile, format_profile_for_display
+)
 from utils.data_exploration import (
     calculate_correlations,
     calculate_vif,
     get_visualization_options,
     create_visualization
+)
+from utils.prediction_models import (
+    recommend_model, prepare_data, train_linear_model, train_logistic_model,
+    evaluate_linear_model, evaluate_logistic_model, get_feature_importance
 )
 import os
 
@@ -57,11 +66,42 @@ else:
         st.session_state.cleaned_data = st.session_state.data.copy()
 
 # Page selection
-page = st.sidebar.radio('Select Lab', ['1: Data Cleaning', '2: Data Exploration'])
+page = st.sidebar.selectbox(
+    "Choose a page",
+    ["Data Cleaning Lab", "Data Exploration Lab", "Prediction Models"]
+)
 
-if page == '1: Data Cleaning':
+if page == 'Data Cleaning Lab':
     st.title('Data Cleaning Lab')
     if st.session_state.data is not None:
+        # Add Data Profile section at the top
+        st.subheader("Data Profile")
+        
+        # Get and display data profile
+        profile = get_data_profile(
+            st.session_state.cleaned_data,
+            st.session_state.data
+        )
+        profile_df = format_profile_for_display(profile)
+        
+        # Create two tabs for profile view
+        profile_tab1, profile_tab2 = st.tabs(["Summary View", "Detailed View"])
+        
+        with profile_tab1:
+            # Show only columns that need cleaning
+            needs_cleaning = profile_df[profile_df['Status'].str.contains('Needs Cleaning', na=False)]
+            if not needs_cleaning.empty:
+                st.write("⚠ Variables that need cleaning:")
+                st.dataframe(needs_cleaning, hide_index=True)
+            else:
+                st.success("✓ All variables have been cleaned!")
+        
+        with profile_tab2:
+            st.write("Complete Dataset Profile:")
+            st.dataframe(profile_df, hide_index=True)
+        
+        st.divider()
+        
         # Column selection
         selected_col = st.selectbox('Choose column', st.session_state.data.columns)
         
@@ -304,6 +344,7 @@ elif '{method}' == 'cap':
     df.loc[df['{selected_col}'] > mean + threshold, '{selected_col}'] = mean + threshold
     df.loc[df['{selected_col}'] < mean - threshold, '{selected_col}'] = mean - threshold
 """
+                        
                         st.code(code, language='python')
                         
                         # Show before/after comparison
@@ -343,9 +384,11 @@ elif '{method}' == 'cap':
     else:
         st.info('Please select a data source to begin')
 
-elif page == '2: Data Exploration':
+elif page == 'Data Exploration Lab':
     st.title('Data Exploration Lab')
+    st.write("Debug: Entering Data Exploration Lab")  # Debug print
     if st.session_state.data is not None:
+        st.write("Debug: Data is loaded")  # Debug print
         # Add option to use original or cleaned data
         data_version = st.radio(
             "Select data version",
@@ -398,42 +441,136 @@ elif page == '2: Data Exploration':
             )
         
         with tab2:
-            st.subheader("Multicollinearity Analysis")
-            st.markdown("""
-            Variance Inflation Factor (VIF) helps detect multicollinearity in your data.
+            st.write("### Outlier Detection and Treatment")
+            st.write("Debug: Entering outlier detection section")  # Debug print
             
-            Guidelines:
-            - VIF = 1: No correlation
-            - 1 < VIF < 5: Moderate correlation
-            - VIF >= 5: High correlation (potential problem)
-            - VIF >= 10: Severe correlation (definite problem)
-            """)
+            # Select columns for outlier detection
+            numeric_cols = current_data.select_dtypes(include=['int64', 'float64']).columns
+            selected_col = st.selectbox(
+                "Select column for outlier detection:",
+                numeric_cols,
+                key="outlier_col"
+            )
             
-            # Calculate and display VIF
-            try:
-                vif_data = calculate_vif(current_data)
+            if selected_col:
+                # Create two columns for controls and visualization
+                control_col, viz_col = st.columns([1, 3])
                 
-                # Create bar plot of VIF scores
-                fig = px.bar(
-                    vif_data,
-                    x='Feature',
-                    y='VIF',
-                    title='Variance Inflation Factors',
-                    template=custom_template
-                )
-                fig.update_traces(marker_color=NU_RED)
-                fig.add_hline(y=5, line_dash="dash", line_color="orange",
-                            annotation_text="High Correlation Threshold")
-                fig.add_hline(y=10, line_dash="dash", line_color="red",
-                            annotation_text="Severe Correlation Threshold")
-                st.plotly_chart(fig, use_container_width=True)
+                with control_col:
+                    # Standard deviation threshold slider
+                    std_dev = st.slider(
+                        "Standard deviation threshold:",
+                        min_value=1.0,
+                        max_value=5.0,
+                        value=3.0,
+                        step=0.1,
+                        help="Values beyond this many standard deviations will be considered outliers"
+                    )
+                    
+                    # Calculate statistics
+                    mean = current_data[selected_col].mean()
+                    std = current_data[selected_col].std()
+                    lower_bound = mean - std_dev * std
+                    upper_bound = mean + std_dev * std
+                    
+                    # Show statistics
+                    st.write("**Statistics:**")
+                    stats_df = pd.DataFrame({
+                        'Metric': ['Mean', 'Std Dev', 'Lower Bound', 'Upper Bound'],
+                        'Value': [
+                            f"{mean:.2f}",
+                            f"{std:.2f}",
+                            f"{lower_bound:.2f}",
+                            f"{upper_bound:.2f}"
+                        ]
+                    })
+                    st.dataframe(stats_df, hide_index=True)
+                    
+                    # Identify outliers
+                    outliers = current_data[
+                        (current_data[selected_col] < lower_bound) |
+                        (current_data[selected_col] > upper_bound)
+                    ][selected_col]
+                    
+                    st.write("**Outlier Summary:**")
+                    st.write(f"Number of outliers: {len(outliers)}")
+                    
+                    if len(outliers) > 0:
+                        st.write("### Treatment Options")
+                        treatment_method = st.selectbox(
+                            "Select treatment method:",
+                            ["remove", "cap"],
+                            help="""
+                            - Remove: Delete rows with outlier values
+                            - Cap: Replace outliers with upper/lower bounds
+                            """
+                        )
+                        
+                        if st.button("Process Outliers"):
+                            # Process outliers
+                            st.session_state.cleaned_data, _ = handle_outliers(
+                                st.session_state.cleaned_data,
+                                selected_col,
+                                std_multiplier=std_dev,
+                                method=treatment_method
+                            )
+                            st.success(f"Outliers processed using {treatment_method} method!")
                 
-                # Show VIF table
-                st.subheader("VIF Values")
-                st.dataframe(vif_data)
-                
-            except Exception as e:
-                st.error(f"Could not calculate VIF scores: {str(e)}")
+                with viz_col:
+                    # Create subplot with histogram and box plot
+                    fig = go.Figure()
+                    
+                    # Add histogram
+                    fig.add_trace(go.Histogram(
+                        x=current_data[selected_col],
+                        name="Distribution",
+                        opacity=0.7,
+                        nbinsx=30
+                    ))
+                    
+                    # Add vertical lines for bounds
+                    fig.add_vline(x=lower_bound, line_dash="dash", line_color="red", annotation_text="Lower Bound")
+                    fig.add_vline(x=upper_bound, line_dash="dash", line_color="red", annotation_text="Upper Bound")
+                    
+                    # Update layout for first subplot
+                    fig.update_layout(
+                        title=f"Distribution of {selected_col} with Outlier Bounds",
+                        showlegend=True,
+                        template=custom_template
+                    )
+                    
+                    # Show the histogram
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Create box plot
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Box(
+                        y=current_data[selected_col],
+                        name=selected_col,
+                        boxpoints='outliers',  # Show outlier points
+                        marker_color='red',
+                        marker=dict(size=4)
+                    ))
+                    
+                    # Update layout for box plot
+                    fig2.update_layout(
+                        title=f"Box Plot of {selected_col}",
+                        showlegend=False,
+                        template=custom_template
+                    )
+                    
+                    # Show the box plot
+                    st.plotly_chart(fig2, use_container_width=True)
+                    
+                    # Show outlier details if any exist
+                    if len(outliers) > 0:
+                        st.write("### Outlier Details")
+                        outlier_df = pd.DataFrame({
+                            'Value': outliers,
+                            'Distance from Mean': abs(outliers - mean) / std
+                        })
+                        outlier_df = outlier_df.sort_values('Distance from Mean', ascending=False)
+                        st.dataframe(outlier_df)
         
         with tab3:
             st.subheader("Custom Visualizations")
@@ -733,3 +870,175 @@ fig.update_layout(template=custom_template)\n"""
                 st.info(f"Please select at least {min_cols} columns for this visualization type")
     else:
         st.info("Please upload a dataset or use the sample dataset to begin exploration.")
+
+elif page == "Prediction Models":
+    st.title("Prediction Models Lab")
+    st.write("Build and evaluate Linear or Logistic Regression models.")
+    
+    if 'data' not in st.session_state:
+        st.error("Please upload a dataset in the Data Cleaning Lab first.")
+    else:
+        # Get current data
+        current_data = (st.session_state['cleaned_data'] 
+                       if 'cleaned_data' in st.session_state 
+                       else st.session_state['data'])
+        
+        # Add Data Profile section
+        with st.expander("View Data Profile", expanded=True):
+            profile = get_data_profile(current_data, st.session_state.data)
+            profile_df = format_profile_for_display(profile)
+            
+            # Show warning if there are uncleaned variables
+            needs_cleaning = profile_df[profile_df['Status'].str.contains('Needs Cleaning', na=False)]
+            if not needs_cleaning.empty:
+                st.warning(
+                    "⚠ Some variables still need cleaning. This might affect model performance. "
+                    "Consider cleaning them in the Data Cleaning Lab first."
+                )
+                st.dataframe(needs_cleaning, hide_index=True)
+            else:
+                st.success("✓ All variables have been cleaned!")
+        
+        st.divider()
+        
+        # Select target variable
+        numeric_cols = current_data.select_dtypes(include=[np.number]).columns
+        target_col = st.selectbox(
+            "Select the variable you want to predict (target variable):",
+            numeric_cols
+        )
+        
+        if target_col:
+            # Get model recommendation
+            recommendation = recommend_model(current_data[target_col])
+            
+            st.subheader("Model Recommendation")
+            st.write(recommendation['description'])
+            
+            if recommendation['model_type'] != 'none':
+                # Select features
+                feature_cols = st.multiselect(
+                    "Select the variables to use as features:",
+                    [col for col in current_data.columns if col != target_col],
+                    help="Choose the variables that you think will help predict your target variable."
+                )
+                
+                if feature_cols:
+                    # Train model button
+                    if st.button("Train Model"):
+                        with st.spinner("Training model..."):
+                            try:
+                                # Prepare data
+                                data = prepare_data(current_data, target_col, feature_cols)
+                                
+                                # Train and evaluate model
+                                if recommendation['model_type'] == 'logistic':
+                                    model = train_logistic_model(data['X_train'], data['y_train'])
+                                    results = evaluate_logistic_model(
+                                        model=model,
+                                        X_test=data['X_test'],
+                                        y_test=data['y_test'],
+                                        X_train=data['X_train'],
+                                        y_train=data['y_train'],
+                                        feature_names=data['feature_names']
+                                    )
+                                else:
+                                    model = train_linear_model(data['X_train'], data['y_train'])
+                                    results = evaluate_linear_model(
+                                        model=model,
+                                        X_test=data['X_test'],
+                                        y_test=data['y_test'],
+                                        X_train=data['X_train'],
+                                        y_train=data['y_train'],
+                                        feature_names=data['feature_names']
+                                    )
+                                
+                                # Display results
+                                st.subheader("Model Performance")
+                                
+                                # Display metrics in a formatted table
+                                metrics_df = pd.DataFrame({
+                                    'Metric': list(results['metrics'].keys()),
+                                    'Value': list(results['metrics'].values())
+                                })
+                                st.write("Model Metrics:")
+                                st.dataframe(metrics_df.style.format({'Value': '{:.4f}'}), hide_index=True)
+                                
+                                # Display coefficients in a formatted table
+                                st.write("\nModel Coefficients:")
+                                coef_df = pd.DataFrame(results['coefficients'])
+                                
+                                # Format p-values with stars for significance
+                                def format_pvalue(p_val):
+                                    stars = ''
+                                    if p_val < 0.001:
+                                        stars = '***'
+                                    elif p_val < 0.01:
+                                        stars = '**'
+                                    elif p_val < 0.05:
+                                        stars = '*'
+                                    return f"{p_val:.4f}{stars}"
+                                
+                                if recommendation['model_type'] == 'logistic':
+                                    coef_display = coef_df[['Feature', 'Coefficient', 'Odds_Ratio', 'P_Value']]
+                                    coef_display.columns = ['Feature', 'Coefficient', 'Odds Ratio', 'P-value']
+                                else:
+                                    coef_display = coef_df[['Feature', 'Coefficient', 'P_Value']]
+                                    coef_display.columns = ['Feature', 'Coefficient', 'P-value']
+                                
+                                # Apply styling
+                                styled_coef = coef_display.style.format({
+                                    'Coefficient': '{:.4f}',
+                                    'Odds Ratio': '{:.4f}' if 'Odds Ratio' in coef_display.columns else None,
+                                    'P-value': format_pvalue
+                                })
+                                
+                                # Add significance level note
+                                st.dataframe(styled_coef, hide_index=True)
+                                st.write("""
+                                **Significance levels:**  
+                                \* p < 0.05  
+                                \** p < 0.01  
+                                \*** p < 0.001
+                                """)
+                                
+                                # Display confusion matrix for logistic regression
+                                if recommendation['model_type'] == 'logistic' and 'confusion_matrix' in results:
+                                    st.subheader("Confusion Matrix")
+                                    conf_matrix = np.array(results['confusion_matrix'])
+                                    
+                                    # Create confusion matrix heatmap
+                                    fig = go.Figure(data=go.Heatmap(
+                                        z=conf_matrix,
+                                        x=['Predicted 0', 'Predicted 1'],
+                                        y=['Actual 0', 'Actual 1'],
+                                        text=conf_matrix,
+                                        texttemplate="%{text}",
+                                        textfont={"size": 16},
+                                        hoverongaps=False,
+                                        colorscale='RdBu'
+                                    ))
+                                    
+                                    fig.update_layout(
+                                        title='Confusion Matrix',
+                                        xaxis_title='Predicted Label',
+                                        yaxis_title='Actual Label',
+                                        width=500,
+                                        height=500
+                                    )
+                                    
+                                    st.plotly_chart(fig)
+                                
+                                # Display feature importance
+                                st.subheader("Feature Importance")
+                                importance = get_feature_importance(
+                                    results['coefficients'],
+                                    recommendation['model_type']
+                                )
+                                
+                                for feat in importance:
+                                    with st.expander(f"**{feat['feature']}** (coefficient: {feat['coefficient']:.4f})"):
+                                        st.write(feat['interpretation'])
+                            
+                            except Exception as e:
+                                st.error(f"An error occurred while training the model: {str(e)}")
