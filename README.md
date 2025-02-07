@@ -1,6 +1,6 @@
 # Data Mining App
 
-A Streamlit-based data mining application for data cleaning and exploration.
+A Streamlit-based data mining application for data cleaning, exploration, and predictive modeling.
 
 ## Features
 
@@ -12,6 +12,7 @@ A Streamlit-based data mining application for data cleaning and exploration.
   - Remove rows with missing values
 - Visual comparison of data before and after cleaning
 - Detailed descriptions of each cleaning method
+- Data profile overview with cleaning recommendations
 
 ### 2. Data Exploration Lab
 - **Correlation Analysis**
@@ -36,6 +37,23 @@ A Streamlit-based data mining application for data cleaning and exploration.
   - Code display for reproducibility
   - Download option for visualization code
 
+### 3. Prediction Models Lab
+- **Automated Model Selection**
+  - Intelligent model recommendation based on target variable
+  - Support for both linear and logistic regression
+  - Clear explanations of model suitability
+
+- **Model Performance Analysis**
+  - Comprehensive metrics display
+  - Interactive confusion matrix visualization
+  - Statistical significance indicators
+
+- **Feature Importance**
+  - Detailed interpretation of coefficients
+  - Significance levels with star notation
+  - Expandable explanations for each feature
+  - Effect size and direction analysis
+
 ## Installation
 
 1. Clone the repository:
@@ -57,8 +75,8 @@ streamlit run app.py
 ## Usage
 
 1. Start by selecting either the sample dataset or uploading your own CSV file
-2. Choose between the Data Cleaning Lab or Data Exploration Lab
-3. Follow the intuitive interface to clean and analyze your data
+2. Choose between the Data Cleaning Lab, Data Exploration Lab, or Prediction Models Lab
+3. Follow the intuitive interface to clean, analyze, and model your data
 
 ### Data Cleaning
 - Select a column to clean
@@ -71,6 +89,12 @@ streamlit run app.py
 - Check for multicollinearity
 - Create custom visualizations
 - Download visualization code for reuse
+
+### Prediction Models
+- Select target variable for prediction
+- Choose relevant features
+- Train and evaluate models
+- Interpret results with detailed explanations
 
 ## Requirements
 - Python 3.8+
