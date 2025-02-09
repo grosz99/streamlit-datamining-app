@@ -1,64 +1,68 @@
 # Data Mining App
 
-A Streamlit-based data mining application for data cleaning, exploration, and predictive modeling.
+A Streamlit-based data mining application for data cleaning, exploration, and visualization with an interactive storytelling dashboard.
 
 ## Features
 
 ### 1. Data Cleaning Lab
-- Handle missing values using multiple methods:
-  - Mean imputation
-  - Median imputation
-  - K-means clustering with correlation analysis
-  - Remove rows with missing values
-- Visual comparison of data before and after cleaning
-- Detailed descriptions of each cleaning method
-- Data profile overview with cleaning recommendations
+- **Handle Missing Values** with multiple methods:
+  - Mean imputation (for normally distributed data)
+  - Median imputation (for skewed data)
+  - Mode imputation (for categorical data)
+  - K-means clustering (for data with strong relationships)
+  - Constant value (for specific business cases)
+  - Drop records (for random missing data)
+- **Visual Distribution Analysis**
+  - View distribution of non-missing values
+  - Compare before/after imputation results
+  - Interactive histograms and value counts
+- **Detailed Method Explanations**
+  - Clear descriptions of each imputation method
+  - Guidance on when to use each method
+  - Impact analysis of chosen method
 
 ### 2. Data Exploration Lab
-- **Correlation Analysis**
-  - Pearson, Spearman, and Kendall correlation methods
-  - Interactive correlation heatmaps
-  - Detailed correlation tables
-
-- **Multicollinearity Analysis**
-  - Variance Inflation Factor (VIF) calculation
-  - Visual representation of collinearity
-  - Guidelines for interpretation
-
-- **Custom Visualizations**
+- **Univariate Analysis**
+  - Distribution visualization
+  - Summary statistics
+  - Outlier detection
+- **Bivariate Analysis**
+  - Relationship exploration
+  - Pattern identification
+  - Correlation studies
+- **Custom Visualization Builder**
   - Multiple plot types:
-    - Scatter Plot (with dual y-axes support)
+    - Scatter Plot
+    - Line Plot
+    - Bar Plot
     - Box Plot
-    - Bar Plot (with dual y-axes support)
     - Histogram
-    - Line Plot (with dual y-axes support)
-    - Heatmap
-  - Sorting options for each visualization
-  - Code display for reproducibility
-  - Download option for visualization code
+    - Pie Chart
+  - Customization options:
+    - Color coding
+    - Axis selection
+    - Binning controls
+  - Interactive plots with Plotly
 
-### 3. Prediction Models Lab
-- **Automated Model Selection**
-  - Intelligent model recommendation based on target variable
-  - Support for both linear and logistic regression
-  - Clear explanations of model suitability
-
-- **Model Performance Analysis**
-  - Comprehensive metrics display
-  - Interactive confusion matrix visualization
-  - Statistical significance indicators
-
-- **Feature Importance**
-  - Detailed interpretation of coefficients
-  - Significance levels with star notation
-  - Expandable explanations for each feature
-  - Effect size and direction analysis
+### 3. Data Storytelling Dashboard
+- **Pin and Organize Visualizations**
+  - Save important insights
+  - Create narrative flow
+  - Build comprehensive data stories
+- **Interactive Components**
+  - Add descriptions to visualizations
+  - Remove or rearrange components
+  - View full-screen visualizations
+- **Collaborative Features**
+  - Share insights with team
+  - Export visualizations
+  - Document findings
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/streamlit-datamining-app.git
+git clone https://github.com/grosz99/streamlit-datamining-app.git
 cd streamlit-datamining-app
 ```
 
@@ -74,39 +78,39 @@ streamlit run app.py
 
 ## Usage
 
-1. Start by selecting either the sample dataset or uploading your own CSV file
-2. Choose between the Data Cleaning Lab, Data Exploration Lab, or Prediction Models Lab
-3. Follow the intuitive interface to clean, analyze, and model your data
+1. **Data Input**
+   - Use sample dataset or upload your own CSV file
+   - Preview data and check basic statistics
+   - Select relevant columns for analysis
 
-### Data Cleaning
-- Select a column to clean
-- Choose a cleaning method
-- View before/after comparisons
-- Apply changes to your dataset
+2. **Data Cleaning**
+   - Identify missing values and patterns
+   - Choose appropriate imputation methods
+   - Validate results with visual comparisons
 
-### Data Exploration
-- Analyze correlations between variables
-- Check for multicollinearity
-- Create custom visualizations
-- Download visualization code for reuse
+3. **Data Exploration**
+   - Create custom visualizations
+   - Analyze distributions and relationships
+   - Detect patterns and outliers
 
-### Prediction Models
-- Select target variable for prediction
-- Choose relevant features
-- Train and evaluate models
-- Interpret results with detailed explanations
+4. **Data Storytelling**
+   - Pin important visualizations
+   - Add context and descriptions
+   - Build a narrative flow
+   - Share insights with stakeholders
 
 ## Requirements
 - Python 3.8+
-- Streamlit
-- Pandas
-- NumPy
-- Plotly
-- Scikit-learn
-- Statsmodels
+- Streamlit >= 1.24.0
+- Pandas >= 1.5.3
+- NumPy >= 1.24.3
+- Plotly >= 5.14.1
+- Scikit-learn >= 1.2.2
+- SciPy >= 1.10.1
+- Statsmodels >= 0.14.0
 
 ## Contributing
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
-[MIT](https://choosealicense.com/licenses/mit/)
+This project is licensed under the MIT License - see the LICENSE file for details.
