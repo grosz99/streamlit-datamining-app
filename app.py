@@ -4,20 +4,16 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils.data_cleaning import (
-    handle_missing_values, get_correlation_candidates,
-    get_data_profile, format_profile_for_display
-)
-from utils.data_exploration import (
-    calculate_correlations,
-    calculate_vif,
-    get_visualization_options,
-    create_visualization
-)
-from utils.prediction_models import (
-    recommend_model, prepare_data, train_linear_model, train_logistic_model,
-    evaluate_linear_model, evaluate_logistic_model, get_feature_importance
-)
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, Lasso
+from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, classification_report
+from sklearn.model_selection import train_test_split
+from scipy import stats
+import statsmodels.api as sm
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from datetime import datetime
 import os
 
 # Northeastern University colors
@@ -37,839 +33,691 @@ custom_template = {
     }
 }
 
-# Initialize session state for data
+# Set page configuration
+st.set_page_config(
+    page_title="Data Mining App",
+    page_icon="📊",
+    layout="wide"
+)
+
+# Initialize session state variables
 if 'data' not in st.session_state:
     st.session_state.data = None
 if 'cleaned_data' not in st.session_state:
     st.session_state.cleaned_data = None
+if 'pinned_visualizations' not in st.session_state:
+    st.session_state.pinned_visualizations = []
+if 'component_order' not in st.session_state:
+    st.session_state.component_order = []
+if 'story_components' not in st.session_state:
+    st.session_state.story_components = {}
+if 'component_counter' not in st.session_state:
+    st.session_state.component_counter = 0
 
-# Sidebar
-st.sidebar.title('Data Mining App')
+# Title and description
+st.title('Data Mining Application')
+st.markdown("""
+This application helps you explore, clean, and analyze your data using various data mining techniques.
+Choose your operation from the sidebar and follow the instructions.
+""")
 
-# Dataset selection
-st.sidebar.subheader("Choose Dataset")
+# Sidebar navigation
+st.sidebar.title('Navigation')
+page = st.sidebar.radio('Select a page:', [
+    'Data Cleaning Lab',
+    'Data Exploration Lab',
+    'Prediction Models',
+    'Data Optimization Lab',
+    'Story Dashboard'
+])
+
+# Data Input section in sidebar
+st.sidebar.header('Data Input')
 dataset_option = st.sidebar.radio(
     "Select data source",
     ["Use Sample Dataset", "Upload Your Own Dataset"]
 )
 
 if dataset_option == "Use Sample Dataset":
-    if st.session_state.data is None:
+    try:
         sample_data_path = os.path.join(os.path.dirname(__file__), 'sample_data.csv')
-        st.session_state.data = pd.read_csv(sample_data_path)
-        st.session_state.cleaned_data = st.session_state.data.copy()
-else:
-    # File upload
-    uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
-    if uploaded_file is not None:
-        st.session_state.data = pd.read_csv(uploaded_file)
-        st.session_state.cleaned_data = st.session_state.data.copy()
+        if os.path.exists(sample_data_path):
+            st.session_state.data = pd.read_csv(sample_data_path)
+            st.session_state.cleaned_data = st.session_state.data.copy()
+            st.sidebar.success('Sample dataset loaded successfully!')
+        else:
+            st.sidebar.error('Sample dataset not found. Please upload your own dataset.')
+            dataset_option = "Upload Your Own Dataset"
+    except Exception as e:
+        st.sidebar.error(f'Error loading sample dataset: {str(e)}')
+        dataset_option = "Upload Your Own Dataset"
 
-# Page selection
-page = st.sidebar.selectbox(
-    "Choose a page",
-    ["Data Cleaning Lab", "Data Exploration Lab", "Prediction Models"]
-)
+if dataset_option == "Upload Your Own Dataset":
+    uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type=['csv'])
+    if uploaded_file is not None:
+        try:
+            st.session_state.data = pd.read_csv(uploaded_file)
+            st.session_state.cleaned_data = st.session_state.data.copy()
+            st.sidebar.success('File uploaded successfully!')
+        except Exception as e:
+            st.sidebar.error(f'Error: {str(e)}')
 
 if page == 'Data Cleaning Lab':
     st.title('Data Cleaning Lab')
-    if st.session_state.data is not None:
-        # Add Data Profile section at the top
-        st.subheader("Data Profile")
-        
-        # Get and display data profile
-        profile = get_data_profile(
-            st.session_state.cleaned_data,
-            st.session_state.data
-        )
-        profile_df = format_profile_for_display(profile)
-        
-        # Create two tabs for profile view
-        profile_tab1, profile_tab2 = st.tabs(["Summary View", "Detailed View"])
-        
-        with profile_tab1:
-            # Show only columns that need cleaning
-            needs_cleaning = profile_df[profile_df['Status'].str.contains('Needs Cleaning', na=False)]
-            if not needs_cleaning.empty:
-                st.write("⚠ Variables that need cleaning:")
-                st.dataframe(needs_cleaning, hide_index=True)
-            else:
-                st.success("✓ All variables have been cleaned!")
-        
-        with profile_tab2:
-            st.write("Complete Dataset Profile:")
-            st.dataframe(profile_df, hide_index=True)
-        
-        st.divider()
-        
-        # Column selection
-        selected_col = st.selectbox('Choose column', st.session_state.data.columns)
-        
-        # Show column statistics
-        st.write(f"Column: {selected_col}")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Missing Values", st.session_state.data[selected_col].isna().sum())
-        with col2:
-            st.metric("Unique Values", st.session_state.data[selected_col].nunique())
-        with col3:
-            dtype = st.session_state.data[selected_col].dtype
-            st.metric("Data Type", str(dtype))
-        with col4:
-            st.metric("Total Rows", len(st.session_state.data))
-        
-        # Show distribution using histogram for numeric columns
-        if pd.api.types.is_numeric_dtype(st.session_state.data[selected_col]):
-            st.subheader("Distribution Plot")
-            fig = px.histogram(
-                st.session_state.data,
-                x=selected_col,
-                nbins=20,
-                title=f"Distribution of {selected_col}"
-            )
-            fig.update_traces(marker_color=NU_RED)
-            fig.update_layout(
-                template=custom_template,
-                showlegend=False,
-                bargap=0.1
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Create tabs for different operations
-        tab1, tab2 = st.tabs(["Missing Values", "Outliers"])
-        
-        with tab1:
-            st.subheader("Handle Missing Values")
-            
-            # Determine column type and available methods
-            is_numeric = pd.api.types.is_numeric_dtype(st.session_state.data[selected_col])
-            
-            # Method selection with descriptions
-            method_descriptions = {
-                'mean': """
-                **Best for**: Continuous numeric data with normal distribution
-                
-                **How it works**: Replaces missing values with the arithmetic mean of the column.
-                This method is particularly useful when:
-                - The data is normally distributed
-                - Outliers don't significantly impact the mean
-                - You want to preserve the exact average of the data
-                """,
-                'median': """
-                **Best for**: Continuous numeric data with potential outliers
-                
-                **How it works**: Replaces missing values with the median value of the column.
-                This method is particularly useful when:
-                - The data has outliers
-                - The distribution is skewed
-                - You want a more robust central tendency measure
-                """,
-                'kmeans': """
-                **Best for**: Continuous numeric data with patterns and correlations
-                
-                **How it works**: Uses K-means clustering to group similar data points and imputes missing values based on cluster centers.
-                This method is particularly effective when:
-                - The data has natural groupings or patterns
-                - There are correlations with other variables
-                - Simple statistical methods might not capture the data structure
-                """,
-                'remove': """
-                **Best for**: Cases where data quality is critical
-                
-                **How it works**: Removes rows with missing values in the selected column.
-                This method is useful when:
-                - You need completely clean data
-                - You have enough data to afford removing rows
-                - Missing values might introduce bias
-                """
-            }
-            
-            # Method selection
-            available_methods = ['mean', 'median', 'remove']
-            if is_numeric:
-                available_methods.append('kmeans')
-            
-            method = st.selectbox(
-                'Select method',
-                available_methods
-            )
-            
-            # Show method description
-            st.markdown(method_descriptions[method])
-            
-            # Additional inputs based on method
-            correlated_columns = None
-            if method == 'kmeans' and is_numeric:
-                st.subheader("Correlation Analysis")
-                correlations = get_correlation_candidates(st.session_state.data, selected_col)
-                
-                if correlations:
-                    # Create correlation plot
-                    corr_data = pd.DataFrame(correlations, columns=['Column', 'Correlation'])
-                    fig = px.bar(
-                        corr_data,
-                        x='Column',
-                        y='Correlation',
-                        title='Correlation with Selected Column',
-                        template=custom_template
-                    )
-                    fig.update_traces(marker_color=NU_RED)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Allow user to select correlated columns for K-means
-                    selected_correlations = st.multiselect(
-                        'Select correlated columns to use for K-means clustering',
-                        [col for col, corr in correlations if corr > 0.1],  # Only show columns with correlation > 0.1
-                        help='Select columns that have meaningful correlations to improve K-means clustering'
-                    )
-                    correlated_columns = selected_correlations if selected_correlations else None
-                else:
-                    st.warning("No significant correlations found with other numeric columns.")
-            
-            # Process button
-            if st.button('Process Missing Values'):
-                try:
-                    # Apply the selected method
-                    st.session_state.cleaned_data = handle_missing_values(
-                        st.session_state.cleaned_data,
-                        selected_col,
-                        method=method,
-                        correlated_columns=correlated_columns
-                    )
-                    st.success('Missing values processed successfully!')
-                    
-                    # Show sample code
-                    st.subheader("Sample Code")
-                    code = f"""# Import required libraries
-import pandas as pd
-import numpy as np
-
-# Assuming your dataframe is called 'df'
-if '{method}' == 'mean':
-    mean_value = df['{selected_col}'].mean()
-    df['{selected_col}'] = df['{selected_col}'].fillna(mean_value)
-elif '{method}' == 'median':
-    median_value = df['{selected_col}'].median()
-    df['{selected_col}'] = df['{selected_col}'].fillna(median_value)
-elif '{method}' == 'kmeans':
-    from sklearn.cluster import KMeans
-    clean_data = df.dropna(subset=['{selected_col}'])
-    kmeans = KMeans(n_clusters=2).fit(clean_data[['{selected_col}']])
-    # Process missing values using cluster centers
-    # ... additional code for K-means imputation
-elif '{method}' == 'remove':
-    df = df.dropna(subset=['{selected_col}'])
-"""
-                    
-                    st.code(code, language='python')
-                    
-                    # Show before/after comparison
-                    st.subheader("Before and After Comparison")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write("Before:")
-                        st.write(st.session_state.data[selected_col].isna().sum(), "missing values")
-                        if is_numeric:
-                            fig = px.histogram(
-                                st.session_state.data,
-                                x=selected_col,
-                                nbins=20,
-                                title="Before"
-                            )
-                            fig.update_traces(marker_color=NU_RED)
-                            fig.update_layout(template=custom_template, showlegend=False, bargap=0.1)
-                            st.plotly_chart(fig)
-                    with col2:
-                        st.write("After:")
-                        st.write(st.session_state.cleaned_data[selected_col].isna().sum(), "missing values")
-                        if is_numeric:
-                            fig = px.histogram(
-                                st.session_state.cleaned_data,
-                                x=selected_col,
-                                nbins=20,
-                                title="After"
-                            )
-                            fig.update_traces(marker_color=NU_RED)
-                            fig.update_layout(template=custom_template, showlegend=False, bargap=0.1)
-                            st.plotly_chart(fig)
-                
-                except Exception as e:
-                    st.error(f"An error occurred: {str(e)}")
-        
-        with tab2:
-            if pd.api.types.is_numeric_dtype(st.session_state.data[selected_col]):
-                st.subheader("Handle Outliers")
-                
-                # Outlier detection settings
-                std_multiplier = st.slider('Standard Deviation Multiplier', 1.0, 5.0, 3.0, 0.1,
-                                        help='Number of standard deviations from mean to consider as outlier')
-                
-                # Method selection
-                method = st.selectbox(
-                    'Select method',
-                    ['remove', 'cap']
-                )
-                
-                # Process button
-                if st.button('Process Outliers'):
-                    try:
-                        # Apply outlier detection and handling
-                        st.session_state.cleaned_data, outlier_mask = handle_outliers(
-                            st.session_state.cleaned_data,
-                            selected_col,
-                            std_multiplier=std_multiplier,
-                            method=method
-                        )
-                        
-                        st.success('Outliers processed successfully!')
-                        
-                        # Show sample code
-                        st.subheader("Sample Code")
-                        code = f"""# Import required libraries
-import pandas as pd
-import numpy as np
-
-# Assuming your dataframe is called 'df'
-# Calculate statistics
-mean = df['{selected_col}'].mean()
-std = df['{selected_col}'].std()
-threshold = {std_multiplier} * std
-
-# Identify outliers
-outliers = np.abs(df['{selected_col}'] - mean) > threshold
-
-if '{method}' == 'remove':
-    df = df[~outliers]
-elif '{method}' == 'cap':
-    df.loc[df['{selected_col}'] > mean + threshold, '{selected_col}'] = mean + threshold
-    df.loc[df['{selected_col}'] < mean - threshold, '{selected_col}'] = mean - threshold
-"""
-                        
-                        st.code(code, language='python')
-                        
-                        # Show before/after comparison
-                        st.subheader("Before and After Comparison")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write("Before:")
-                            fig = px.histogram(
-                                st.session_state.data,
-                                x=selected_col,
-                                nbins=20,
-                                title="Before"
-                            )
-                            fig.update_traces(marker_color=NU_RED)
-                            fig.update_layout(template=custom_template, showlegend=False, bargap=0.1)
-                            st.plotly_chart(fig)
-                        with col2:
-                            st.write("After:")
-                            fig = px.histogram(
-                                st.session_state.cleaned_data,
-                                x=selected_col,
-                                nbins=20,
-                                title="After"
-                            )
-                            fig.update_traces(marker_color=NU_RED)
-                            fig.update_layout(template=custom_template, showlegend=False, bargap=0.1)
-                            st.plotly_chart(fig)
-                        
-                        # Show outlier statistics
-                        st.write(f"Number of outliers detected: {outlier_mask.sum()}")
-                        st.write(f"Percentage of data marked as outliers: {(outlier_mask.sum() / len(outlier_mask) * 100):.2f}%")
-                    
-                    except Exception as e:
-                        st.error(f"An error occurred: {str(e)}")
-            else:
-                st.info("Outlier detection is only available for numeric columns")
+    
+    if st.session_state.data is None:
+        st.error("Please upload a dataset first!")
     else:
-        st.info('Please select a data source to begin')
-
-elif page == 'Data Exploration Lab':
-    st.title('Data Exploration Lab')
-    st.write("Debug: Entering Data Exploration Lab")  # Debug print
-    if st.session_state.data is not None:
-        st.write("Debug: Data is loaded")  # Debug print
-        # Add option to use original or cleaned data
-        data_version = st.radio(
-            "Select data version",
-            ["Original Data", "Cleaned Data"],
-            help="Use cleaned data to see the effects of your data cleaning operations"
-        )
+        # Get current data
+        current_data = st.session_state.cleaned_data if st.session_state.cleaned_data is not None else st.session_state.data
         
-        # Use appropriate dataset
-        current_data = st.session_state.cleaned_data if data_version == "Cleaned Data" else st.session_state.data
-        
-        # Create tabs for different analyses
-        tab1, tab2, tab3 = st.tabs([
-            "Correlation Analysis",
-            "Multicollinearity Analysis",
-            "Custom Visualizations"
+        # Tabs for different cleaning operations
+        clean_tab1, clean_tab2, clean_tab3, clean_tab4 = st.tabs([
+            "Missing Values", "Outliers", "Duplicates", "Data Type Conversion"
         ])
         
-        with tab1:
-            st.subheader("Correlation Analysis")
+        # Tab 1: Missing Values
+        with clean_tab1:
+            st.subheader("Handle Missing Values")
             
-            # Correlation method selection
-            corr_method = st.selectbox(
-                "Select correlation method",
-                ["pearson", "spearman", "kendall"],
-                help="""
-                - Pearson: Linear correlation, assumes normal distribution
-                - Spearman: Rank correlation, good for non-linear monotonic relationships
-                - Kendall: Rank correlation, more robust to outliers than Spearman
-                """
-            )
-            
-            # Calculate and display correlation matrix
-            corr_matrix = calculate_correlations(current_data, method=corr_method)
-            
-            # Create heatmap
-            fig = px.imshow(
-                corr_matrix,
-                color_continuous_scale='RdBu',
-                aspect='auto',
-                title=f'{corr_method.capitalize()} Correlation Matrix'
-            )
-            fig.update_layout(template=custom_template)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Show correlation table
-            st.subheader("Correlation Values")
-            st.dataframe(
-                corr_matrix.style.background_gradient(cmap='RdBu', vmin=-1, vmax=1),
-                height=400
-            )
+            # Display missing value information
+            missing_info = current_data.isnull().sum()
+            if missing_info.sum() == 0:
+                st.success("No missing values found in the dataset!")
+            else:
+                st.write("Missing value counts by column:")
+                missing_df = pd.DataFrame({
+                    'Column': missing_info.index,
+                    'Missing Values': missing_info.values,
+                    'Percentage': (missing_info.values / len(current_data) * 100).round(2)
+                })
+                missing_df = missing_df[missing_df['Missing Values'] > 0]
+                st.dataframe(missing_df)
+                
+                # Column selection
+                cols_with_missing = missing_df['Column'].tolist()
+                if cols_with_missing:
+                    selected_col = st.selectbox(
+                        "Select column to handle missing values",
+                        cols_with_missing
+                    )
+                    
+                    # Show distribution of non-missing values
+                    if pd.api.types.is_numeric_dtype(current_data[selected_col]):
+                        st.write("### Distribution of Non-Missing Values")
+                        fig = px.histogram(current_data[~current_data[selected_col].isnull()], 
+                                          x=selected_col, 
+                                          title=f"Distribution of {selected_col}")
+                        st.plotly_chart(fig)
+                    else:
+                        st.write("### Value Counts of Non-Missing Values")
+                        st.write(current_data[selected_col].value_counts())
+
+                    # Method selection with explanations
+                    st.write("### Select Imputation Method")
+                    method_descriptions = {
+                        "mean": "**Mean Imputation**: Replaces missing values with the average of non-missing values. Best for normally distributed numerical data with no significant outliers.",
+                        "median": "**Median Imputation**: Replaces missing values with the median. Better than mean when data is skewed or contains outliers.",
+                        "mode": "**Mode Imputation**: Replaces missing values with the most frequent value. Suitable for categorical data or discrete numerical values.",
+                        "constant": "**Constant Value**: Replaces missing values with a specified constant. Useful when missing values have a specific meaning or when you want to flag them.",
+                        "kmeans": "**K-Means Imputation**: Uses K-means clustering to estimate missing values. Good for data with strong relationships between features but computationally intensive.",
+                        "drop": "**Drop Records**: Removes rows with missing values. Only use if missing data is random and you can afford to lose observations."
+                    }
+                    
+                    method = st.selectbox("Select imputation method", list(method_descriptions.keys()))
+                    
+                    # Display method description
+                    st.markdown(method_descriptions[method])
+                    
+                    # Method-specific parameters and processing
+                    new_data = current_data.copy()
+                    
+                    if method == "constant":
+                        constant_value = st.text_input("Enter constant value:")
+                        if constant_value and st.button("Process Missing Values"):
+                            try:
+                                if pd.api.types.is_numeric_dtype(new_data[selected_col]):
+                                    constant_value = float(constant_value)
+                                new_data[selected_col].fillna(constant_value, inplace=True)
+                                st.session_state.cleaned_data = new_data
+                                st.success(f"Missing values in {selected_col} have been replaced with {constant_value}")
+                            except ValueError:
+                                st.error("Please enter a valid value")
+                    
+                    elif method == "kmeans":
+                        n_clusters = st.slider("Select number of clusters:", 2, 10, 3)
+                        if st.button("Process Missing Values"):
+                            try:
+                                # Get numeric columns for clustering
+                                numeric_cols = new_data.select_dtypes(include=[np.number]).columns
+                                X = new_data[numeric_cols].copy()
+                                
+                                # Temporarily fill missing values with mean for scaling
+                                X = X.fillna(X.mean())
+                                
+                                # Scale the data
+                                scaler = StandardScaler()
+                                X_scaled = scaler.fit_transform(X)
+                                
+                                # Apply K-means
+                                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                                clusters = kmeans.fit_predict(X_scaled)
+                                
+                                # For each cluster, fill missing values with cluster mean
+                                for cluster in range(n_clusters):
+                                    cluster_mean = new_data[selected_col][clusters == cluster].mean()
+                                    mask = (clusters == cluster) & (new_data[selected_col].isna())
+                                    new_data.loc[mask, selected_col] = cluster_mean
+                                
+                                st.session_state.cleaned_data = new_data
+                                st.success(f"Missing values in {selected_col} have been imputed using K-means clustering")
+                            except Exception as e:
+                                st.error(f"Error during K-means imputation: {str(e)}")
+                    
+                    elif method == "drop":
+                        if st.button("Process Missing Values"):
+                            new_data = new_data.dropna(subset=[selected_col])
+                            st.session_state.cleaned_data = new_data
+                            st.success(f"Rows with missing values in {selected_col} have been dropped")
+                    
+                    else:  # mean, median, mode
+                        if st.button("Process Missing Values"):
+                            if method == "mean" and pd.api.types.is_numeric_dtype(new_data[selected_col]):
+                                new_data[selected_col].fillna(new_data[selected_col].mean(), inplace=True)
+                            elif method == "median" and pd.api.types.is_numeric_dtype(new_data[selected_col]):
+                                new_data[selected_col].fillna(new_data[selected_col].median(), inplace=True)
+                            elif method == "mode":
+                                new_data[selected_col].fillna(new_data[selected_col].mode()[0], inplace=True)
+                            else:
+                                st.error(f"{method} imputation is only applicable to numeric columns")
+                                st.stop()
+                            
+                            st.session_state.cleaned_data = new_data
+                            st.success(f"Missing values in {selected_col} have been imputed using {method}")
+                    
+                    # Show before/after comparison
+                    if 'cleaned_data' in st.session_state:
+                        st.write("### Before vs After Imputation")
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write("Before:")
+                            if pd.api.types.is_numeric_dtype(st.session_state.data[selected_col]):
+                                fig1 = px.histogram(st.session_state.data[selected_col], title="Original Distribution")
+                                st.plotly_chart(fig1)
+                            else:
+                                st.write(st.session_state.data[selected_col].value_counts())
+                                
+                        with col2:
+                            st.write("After:")
+                            if pd.api.types.is_numeric_dtype(st.session_state.cleaned_data[selected_col]):
+                                fig2 = px.histogram(st.session_state.cleaned_data[selected_col], title="Imputed Distribution")
+                                st.plotly_chart(fig2)
+                            else:
+                                st.write(st.session_state.cleaned_data[selected_col].value_counts())
         
-        with tab2:
-            st.write("### Outlier Detection and Treatment")
-            st.write("Debug: Entering outlier detection section")  # Debug print
+        with clean_tab2:
+            st.header("Outlier Detection and Treatment")
             
-            # Select columns for outlier detection
-            numeric_cols = current_data.select_dtypes(include=['int64', 'float64']).columns
+            # Select column for outlier detection
+            numeric_cols = st.session_state.cleaned_data.select_dtypes(include=[np.number]).columns
             selected_col = st.selectbox(
                 "Select column for outlier detection:",
                 numeric_cols,
-                key="outlier_col"
+                key='outlier_col'
             )
             
             if selected_col:
-                # Create two columns for controls and visualization
-                control_col, viz_col = st.columns([1, 3])
+                # Calculate statistics
+                data = st.session_state.cleaned_data[selected_col]
+                mean = data.mean()
+                std = data.std()
                 
-                with control_col:
-                    # Standard deviation threshold slider
-                    std_dev = st.slider(
-                        "Standard deviation threshold:",
-                        min_value=1.0,
-                        max_value=5.0,
-                        value=3.0,
-                        step=0.1,
-                        help="Values beyond this many standard deviations will be considered outliers"
-                    )
-                    
-                    # Calculate statistics
-                    mean = current_data[selected_col].mean()
-                    std = current_data[selected_col].std()
-                    lower_bound = mean - std_dev * std
-                    upper_bound = mean + std_dev * std
-                    
-                    # Show statistics
-                    st.write("**Statistics:**")
+                # Outlier threshold control
+                st.subheader("Set Outlier Threshold")
+                threshold = st.slider(
+                    "Standard deviation threshold:",
+                    min_value=1.0,
+                    max_value=5.0,
+                    value=3.0,
+                    step=0.1,
+                    help="Data points beyond this many standard deviations from the mean will be considered outliers"
+                )
+                
+                # Calculate bounds
+                lower_bound = mean - threshold * std
+                upper_bound = mean + threshold * std
+                
+                # Identify outliers
+                outliers = data[(data < lower_bound) | (data > upper_bound)]
+                
+                # Display statistics
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Statistics")
                     stats_df = pd.DataFrame({
                         'Metric': ['Mean', 'Std Dev', 'Lower Bound', 'Upper Bound'],
-                        'Value': [
-                            f"{mean:.2f}",
-                            f"{std:.2f}",
-                            f"{lower_bound:.2f}",
-                            f"{upper_bound:.2f}"
-                        ]
+                        'Value': [mean, std, lower_bound, upper_bound]
                     })
-                    st.dataframe(stats_df, hide_index=True)
-                    
-                    # Identify outliers
-                    outliers = current_data[
-                        (current_data[selected_col] < lower_bound) |
-                        (current_data[selected_col] > upper_bound)
-                    ][selected_col]
-                    
-                    st.write("**Outlier Summary:**")
-                    st.write(f"Number of outliers: {len(outliers)}")
-                    
-                    if len(outliers) > 0:
-                        st.write("### Treatment Options")
-                        treatment_method = st.selectbox(
-                            "Select treatment method:",
-                            ["remove", "cap"],
-                            help="""
-                            - Remove: Delete rows with outlier values
-                            - Cap: Replace outliers with upper/lower bounds
-                            """
-                        )
-                        
-                        if st.button("Process Outliers"):
-                            # Process outliers
-                            st.session_state.cleaned_data, _ = handle_outliers(
-                                st.session_state.cleaned_data,
-                                selected_col,
-                                std_multiplier=std_dev,
-                                method=treatment_method
-                            )
-                            st.success(f"Outliers processed using {treatment_method} method!")
+                    st.dataframe(stats_df.style.format({'Value': '{:.2f}'}))
                 
-                with viz_col:
-                    # Create subplot with histogram and box plot
-                    fig = go.Figure()
-                    
-                    # Add histogram
-                    fig.add_trace(go.Histogram(
-                        x=current_data[selected_col],
-                        name="Distribution",
-                        opacity=0.7,
-                        nbinsx=30
-                    ))
-                    
-                    # Add vertical lines for bounds
-                    fig.add_vline(x=lower_bound, line_dash="dash", line_color="red", annotation_text="Lower Bound")
-                    fig.add_vline(x=upper_bound, line_dash="dash", line_color="red", annotation_text="Upper Bound")
-                    
-                    # Update layout for first subplot
-                    fig.update_layout(
-                        title=f"Distribution of {selected_col} with Outlier Bounds",
-                        showlegend=True,
-                        template=custom_template
+                with col2:
+                    st.subheader("Outlier Summary")
+                    st.write(f"Total outliers found: {len(outliers)}")
+                    st.write(f"Percentage of data: {(len(outliers)/len(data)*100):.2f}%")
+                
+                # Visualization
+                fig = px.histogram(
+                    data,
+                    title=f"Distribution of {selected_col} with Outlier Bounds",
+                    labels={'value': selected_col, 'count': 'Frequency'}
+                )
+                fig.add_vline(x=lower_bound, line_dash="dash", line_color="red", name="Lower Bound")
+                fig.add_vline(x=upper_bound, line_dash="dash", line_color="red", name="Upper Bound")
+                st.plotly_chart(fig)
+                
+                # Outlier treatment options
+                if len(outliers) > 0:
+                    st.subheader("Outlier Treatment")
+                    treatment = st.radio(
+                        "Select treatment method:",
+                        ["None", "Remove", "Cap", "Mean", "Median"],
+                        help="""
+                        - Remove: Delete rows with outliers
+                        - Cap: Cap values at the bounds
+                        - Mean: Replace outliers with mean
+                        - Median: Replace outliers with median
+                        """
                     )
                     
-                    # Show the histogram
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Create box plot
-                    fig2 = go.Figure()
-                    fig2.add_trace(go.Box(
-                        y=current_data[selected_col],
-                        name=selected_col,
-                        boxpoints='outliers',  # Show outlier points
-                        marker_color='red',
-                        marker=dict(size=4)
-                    ))
-                    
-                    # Update layout for box plot
-                    fig2.update_layout(
-                        title=f"Box Plot of {selected_col}",
-                        showlegend=False,
-                        template=custom_template
-                    )
-                    
-                    # Show the box plot
-                    st.plotly_chart(fig2, use_container_width=True)
-                    
-                    # Show outlier details if any exist
-                    if len(outliers) > 0:
-                        st.write("### Outlier Details")
-                        outlier_df = pd.DataFrame({
-                            'Value': outliers,
-                            'Distance from Mean': abs(outliers - mean) / std
-                        })
-                        outlier_df = outlier_df.sort_values('Distance from Mean', ascending=False)
-                        st.dataframe(outlier_df)
+                    if treatment != "None" and st.button("Apply Treatment"):
+                        temp_data = st.session_state.cleaned_data.copy()
+                        
+                        if treatment == "Remove":
+                            temp_data = temp_data[~temp_data[selected_col].isin(outliers)]
+                        elif treatment == "Cap":
+                            temp_data.loc[temp_data[selected_col] < lower_bound, selected_col] = lower_bound
+                            temp_data.loc[temp_data[selected_col] > upper_bound, selected_col] = upper_bound
+                        elif treatment == "Mean":
+                            temp_data.loc[temp_data[selected_col].isin(outliers), selected_col] = mean
+                        elif treatment == "Median":
+                            temp_data.loc[temp_data[selected_col].isin(outliers), selected_col] = data.median()
+                        
+                        st.session_state.cleaned_data = temp_data
+                        st.success(f"Applied {treatment} treatment to outliers in {selected_col}")
+                        st.experimental_rerun()
         
-        with tab3:
-            st.subheader("Custom Visualizations")
+        with clean_tab3:
+            st.subheader("Handle Duplicates")
             
-            # Get visualization options
-            viz_options = get_visualization_options(current_data)
+            # Duplicate detection settings
+            duplicate_subset = st.multiselect(
+                "Select columns to check for duplicates",
+                st.session_state.data.columns.tolist(),  
+                default=st.session_state.data.columns.tolist()  
+            )
+            
+            # Duplicate detection
+            duplicates = st.session_state.data.duplicated(subset=duplicate_subset, keep=False)
+            
+            # Display duplicate statistics
+            st.write(f"Total duplicates found: {duplicates.sum()}")
+            st.write(f"Percentage of data: {(duplicates.sum()/len(duplicates)*100):.2f}%")
+            
+            # Duplicate treatment options
+            if duplicates.sum() > 0:
+                st.subheader("Duplicate Treatment")
+                treatment = st.radio(
+                    "Select treatment method:",
+                    ["None", "Remove"],
+                    help="""
+                    - Remove: Delete duplicate rows
+                    """
+                )
+                
+                if treatment != "None" and st.button("Apply Treatment"):
+                    if treatment == "Remove":
+                        st.session_state.cleaned_data = st.session_state.cleaned_data.drop_duplicates(subset=duplicate_subset)
+                    st.success(f"Applied {treatment} treatment to duplicates")
+                    st.experimental_rerun()
+        
+        with clean_tab4:
+            st.subheader("Data Type Conversion")
+            
+            # Column selection
+            selected_col = st.selectbox('Choose column', st.session_state.data.columns)
+            
+            # Data type conversion options
+            conversion_options = {
+                'int64': 'Integer',
+                'float64': 'Float',
+                'object': 'String',
+                'category': 'Category'
+            }
+            current_type = st.session_state.data[selected_col].dtype
+            available_types = [t for t in conversion_options if t != current_type.name]
+            
+            if available_types:
+                new_type = st.selectbox(
+                    "Select new data type",
+                    [conversion_options[t] for t in available_types]
+                )
+                
+                # Apply conversion
+                if st.button("Apply Conversion"):
+                    try:
+                        st.session_state.cleaned_data[selected_col] = st.session_state.cleaned_data[selected_col].astype(available_types[[conversion_options[t] for t in available_types].index(new_type)])
+                        st.success(f"Converted {selected_col} to {new_type}")
+                    except ValueError as e:
+                        st.error(f"Conversion failed: {str(e)}")
+            else:
+                st.info("No other data types available for conversion")
+
+elif page == 'Data Exploration Lab':
+    st.title('Data Exploration Lab')
+    
+    if st.session_state.data is None:
+        st.error("Please upload a dataset first!")
+    else:
+        # Get current data
+        current_data = st.session_state.cleaned_data if st.session_state.cleaned_data is not None else st.session_state.data
+        
+        # Create tabs
+        tab1, tab2, tab3 = st.tabs([
+            "Correlation Analysis",
+            "Multicollinearity Analysis",
+            "Visualization Builder"
+        ])
+        
+        # Tab 1: Correlation Analysis
+        with tab1:
+            st.header("Correlation Analysis")
+            numeric_cols = current_data.select_dtypes(include=[np.number]).columns.tolist()
+            
+            if len(numeric_cols) < 2:
+                st.warning("Need at least 2 numeric columns for correlation analysis.")
+            else:
+                # Calculate correlation matrix
+                corr_matrix = current_data[numeric_cols].corr()
+                
+                # Display correlation heatmap
+                fig = px.imshow(
+                    corr_matrix,
+                    title="Feature Correlation Heatmap",
+                    labels=dict(color="Correlation"),
+                    color_continuous_scale="RdBu"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Find high correlations
+                high_corr_pairs = []
+                for i in range(len(numeric_cols)):
+                    for j in range(i+1, len(numeric_cols)):
+                        corr = abs(corr_matrix.iloc[i, j])
+                        if corr > 0.7:  # Threshold for high correlation
+                            high_corr_pairs.append({
+                                'Feature 1': numeric_cols[i],
+                                'Feature 2': numeric_cols[j],
+                                'Correlation': corr_matrix.iloc[i, j]
+                            })
+                
+                if high_corr_pairs:
+                    st.subheader("High Correlations (|r| > 0.7)")
+                    high_corr_df = pd.DataFrame(high_corr_pairs)
+                    st.dataframe(
+                        high_corr_df.style.format({'Correlation': '{:.3f}'})
+                        .background_gradient(subset=['Correlation'], cmap='RdBu')
+                    )
+                else:
+                    st.success("No high correlations found between features (|r| ≤ 0.7)")
+        
+        # Tab 2: Multicollinearity Analysis
+        with tab2:
+            st.header("Multicollinearity Analysis")
+            numeric_cols = current_data.select_dtypes(include=[np.number]).columns.tolist()
+            
+            if len(numeric_cols) < 2:
+                st.warning("Need at least 2 numeric columns for multicollinearity analysis.")
+            else:
+                st.subheader("Variance Inflation Factor (VIF) Analysis")
+                st.write("""
+                VIF measures how much the variance of a regression coefficient is inflated due to multicollinearity.
+                - VIF = 1: No correlation
+                - 1 < VIF < 5: Moderate correlation
+                - VIF ≥ 5: High correlation (potential problem)
+                - VIF ≥ 10: Serious multicollinearity problem
+                """)
+                
+                # Calculate VIF scores
+                vif_data = pd.DataFrame()
+                vif_data["Feature"] = numeric_cols
+                
+                # Clean data for VIF calculation
+                X = current_data[numeric_cols].copy()
+                
+                # Check for missing values and infinities
+                has_missing = X.isnull().any().any() or np.isinf(X.values).any()
+                
+                if has_missing:
+                    st.warning("⚠️ Dataset contains missing values or infinite numbers. These will be handled automatically.")
+                    # Replace infinities with NaN
+                    X = X.replace([np.inf, -np.inf], np.nan)
+                    # Fill missing values with median
+                    X = X.fillna(X.median())
+                
+                try:
+                    # Calculate VIF for each feature
+                    vif_data["VIF"] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+                    vif_data = vif_data.sort_values('VIF', ascending=False)
+                    
+                    # Display VIF scores with color coding
+                    def color_vif(val):
+                        if val >= 10:
+                            return 'background-color: #ff9999'  # Red
+                        elif val >= 5:
+                            return 'background-color: #ffeb99'  # Yellow
+                        return ''
+                    
+                    st.dataframe(
+                        vif_data.style.format({'VIF': '{:.2f}'})
+                        .applymap(color_vif, subset=['VIF'])
+                    )
+                    
+                    # Identify problematic features
+                    problem_features = vif_data[vif_data['VIF'] >= 5]['Feature'].tolist()
+                    if problem_features:
+                        st.warning("⚠️ The following features show signs of multicollinearity:")
+                        for feat in problem_features:
+                            st.write(f"- {feat} (VIF: {vif_data[vif_data['Feature'] == feat]['VIF'].values[0]:.2f})")
+                        
+                        st.subheader("Correlation Analysis for Problematic Features")
+                        problem_corr = current_data[problem_features].corr()
+                        
+                        fig = px.imshow(
+                            problem_corr,
+                            title="Correlation Heatmap for High VIF Features",
+                            labels=dict(color="Correlation"),
+                            color_continuous_scale="RdBu"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.subheader("Suggestions for Handling Multicollinearity")
+                        st.markdown("""
+                        1. **Feature Selection**:
+                           - Remove one of each highly correlated pair
+                           - Keep features that have stronger correlation with target variable
+                        
+                        2. **Feature Engineering**:
+                           - Create interaction terms or ratios
+                           - Combine correlated features into a single feature
+                        
+                        3. **Dimensionality Reduction**:
+                           ```python
+                           from sklearn.decomposition import PCA
+                           
+                           # Apply PCA to correlated features
+                           pca = PCA(n_components=0.95)  # Keep 95% of variance
+                           transformed_features = pca.fit_transform(df[problem_features])
+                           ```
+                        
+                        4. **Regularization**:
+                           - Use Ridge (L2) or Lasso (L1) regression
+                           - These methods can handle multicollinearity
+                           ```python
+                           from sklearn.linear_model import Ridge, Lasso
+                           
+                           # Ridge Regression
+                           ridge = Ridge(alpha=1.0)
+                           
+                           # Lasso Regression
+                           lasso = Lasso(alpha=1.0)
+                           ```
+                        """)
+                    else:
+                        st.success("No significant multicollinearity detected (all VIF scores < 5)")
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
+        
+        # Tab 3: Visualization Builder
+        with tab3:
+            st.header("Create Custom Visualization")
             
             # Visualization type selection
             viz_type = st.selectbox(
                 "Select visualization type",
-                list(viz_options.keys())
+                ["Scatter Plot", "Line Chart", "Bar Chart", "Histogram", "Box Plot", "Violin Plot"]
             )
             
-            # Show visualization description
-            st.markdown(viz_options[viz_type]['description'])
-            
             # Column selection based on visualization type
-            selected_columns = []
-            viz_config = viz_options[viz_type]
-            min_cols, max_cols = viz_config['required_cols'] if isinstance(viz_config['required_cols'], tuple) else (viz_config['required_cols'], viz_config['required_cols'])
+            col1, col2 = st.columns(2)
             
-            if viz_config['required_cols'] == 'all_numeric':
-                numeric_cols = current_data.select_dtypes(include=[np.number]).columns
-                selected_columns = st.multiselect(
-                    "Select numeric columns",
-                    numeric_cols,
-                    default=list(numeric_cols)[:min(5, len(numeric_cols))]
+            with col1:
+                x_col = st.selectbox("X-axis", current_data.columns.tolist(), key="x_axis")
+                if viz_type in ["Scatter Plot", "Line Chart", "Box Plot", "Violin Plot"]:
+                    y_col = st.selectbox("Y-axis", current_data.columns.tolist(), key="y_axis")
+                else:
+                    y_col = None
+            
+            with col2:
+                color_col = st.selectbox(
+                    "Color by",
+                    ["None"] + current_data.columns.tolist(),
+                    key="color"
                 )
-            else:
-                for i in range(max_cols):
-                    if i >= min_cols and len(selected_columns) >= min_cols:
-                        if not st.checkbox(f"Add another variable (y-axis {i})", key=f"add_var_{i}"):
-                            break
-                    
-                    col_type = viz_config['col_types'][i]
-                    if col_type == 'numeric':
-                        cols = current_data.select_dtypes(include=[np.number]).columns
-                    elif col_type == 'categorical':
-                        cols = current_data.select_dtypes(include=['object', 'category']).columns
-                    else:  # 'any'
-                        cols = current_data.columns
-                    
-                    selected_columns.append(
-                        st.selectbox(f"Select column {i+1}", cols, key=f"col_{i}")
-                    )
-            
-            # Sorting options
-            sort_options = {}
-            if viz_config['supports_sort']:
-                col1, col2 = st.columns(2)
-                with col1:
-                    sort_by = st.selectbox(
-                        "Sort by",
-                        ['None'] + viz_config['sort_options'],
-                        help="Select column or metric to sort by"
-                    )
-                with col2:
-                    sort_ascending = st.checkbox("Sort ascending", value=True)
                 
-                if sort_by != 'None':
-                    sort_options = {
-                        'sort_by': sort_by,
-                        'sort_ascending': sort_ascending
-                    }
-            
-            # Create visualization
-            if len(selected_columns) >= min_cols:
-                try:
-                    fig = create_visualization(
-                        current_data,
-                        viz_type,
-                        selected_columns,
-                        **sort_options
+                if viz_type in ["Bar Chart", "Box Plot"]:
+                    agg_func = st.selectbox(
+                        "Aggregation function",
+                        ["mean", "median", "sum", "count"],
+                        key="agg_func"
                     )
-                    fig.update_layout(template=custom_template)
+                else:
+                    agg_func = None
+            
+            try:
+                fig = None
+                
+                if viz_type == "Scatter Plot":
+                    fig = px.scatter(
+                        current_data,
+                        x=x_col,
+                        y=y_col,
+                        color=None if color_col == "None" else color_col,
+                        title=f"{y_col} vs {x_col}"
+                    )
+                
+                elif viz_type == "Line Chart":
+                    fig = px.line(
+                        current_data,
+                        x=x_col,
+                        y=y_col,
+                        color=None if color_col == "None" else color_col,
+                        title=f"{y_col} over {x_col}"
+                    )
+                
+                elif viz_type == "Bar Chart":
+                    if agg_func == "count":
+                        fig = px.histogram(
+                            current_data,
+                            x=x_col,
+                            color=None if color_col == "None" else color_col,
+                            title=f"Count of {x_col}"
+                        )
+                    else:
+                        grouped_data = current_data.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                        fig = px.bar(
+                            grouped_data,
+                            x=x_col,
+                            y=y_col,
+                            title=f"{agg_func.capitalize()} of {y_col} by {x_col}"
+                        )
+                
+                elif viz_type == "Histogram":
+                    fig = px.histogram(
+                        current_data,
+                        x=x_col,
+                        color=None if color_col == "None" else color_col,
+                        title=f"Distribution of {x_col}"
+                    )
+                
+                elif viz_type == "Box Plot":
+                    fig = px.box(
+                        current_data,
+                        x=x_col,
+                        y=y_col,
+                        color=None if color_col == "None" else color_col,
+                        title=f"Box Plot of {y_col} by {x_col}"
+                    )
+                
+                elif viz_type == "Violin Plot":
+                    fig = px.violin(
+                        current_data,
+                        x=x_col,
+                        y=y_col,
+                        color=None if color_col == "None" else color_col,
+                        title=f"Violin Plot of {y_col} by {x_col}"
+                    )
+                
+                if fig:
+                    # Update layout
+                    fig.update_layout(
+                        template="plotly_white",
+                        height=600
+                    )
+                    
+                    # Display the plot
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # Show code for the visualization
-                    st.subheader("Code for this Visualization")
+                    # Pin visualization option
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        viz_description = st.text_area(
+                            "Add a description for this visualization",
+                            placeholder="Enter a description to help remember why this visualization is important..."
+                        )
                     
-                    # Generate code based on visualization type
-                    code = "import plotly.express as px\nimport plotly.graph_objects as go\nfrom plotly.subplots import make_subplots\n\n"
-                    
-                    if viz_type == 'Scatter Plot':
-                        if len(selected_columns) == 2:
-                            code += f"""# Create scatter plot
-fig = px.scatter(
-    data_frame=df,
-    x='{selected_columns[0]}',
-    y='{selected_columns[1]}',
-    title='{selected_columns[1]} vs {selected_columns[0]}'
-)
-fig.update_traces(marker_color='{NU_RED}')\n"""
-                        else:
-                            code += f"""# Create scatter plot with dual y-axes
-fig = make_subplots(specs=[[{{"secondary_y": True}}]])
-
-# Primary y-axis
-fig.add_trace(
-    go.Scatter(
-        x=df['{selected_columns[0]}'],
-        y=df['{selected_columns[1]}'],
-        name='{selected_columns[1]}',
-        mode='markers',
-        marker_color='{NU_RED}'
-    ),
-    secondary_y=False
-)
-
-# Secondary y-axis
-fig.add_trace(
-    go.Scatter(
-        x=df['{selected_columns[0]}'],
-        y=df['{selected_columns[2]}'],
-        name='{selected_columns[2]}',
-        mode='markers',
-        marker_color='{NU_GRAY}'
-    ),
-    secondary_y=True
-)
-
-fig.update_layout(
-    title='Multiple Variables vs {selected_columns[0]}',
-    xaxis_title='{selected_columns[0]}',
-    yaxis_title='{selected_columns[1]}',
-    yaxis2_title='{selected_columns[2]}'
-)\n"""
-
-                    elif viz_type == 'Box Plot':
-                        code += f"""# Create box plot
-fig = px.box(
-    data_frame=df,
-    x='{selected_columns[0]}',
-    y='{selected_columns[1]}',
-    title='Distribution of {selected_columns[1]} by {selected_columns[0]}'
-)
-fig.update_traces(marker_color='{NU_RED}')\n"""
-
-                    elif viz_type == 'Bar Plot':
-                        if len(selected_columns) == 1:
-                            code += f"""# Create bar plot for single column
-value_counts = df['{selected_columns[0]}'].value_counts()
-fig = px.bar(
-    x=value_counts.index,
-    y=value_counts.values,
-    title='Counts of {selected_columns[0]}'
-)
-fig.update_traces(marker_color='{NU_RED}')\n"""
-                        elif len(selected_columns) == 2:
-                            code += f"""# Create bar plot
-fig = px.bar(
-    data_frame=df,
-    x='{selected_columns[0]}',
-    y='{selected_columns[1]}',
-    title='{selected_columns[1]} by {selected_columns[0]}'
-)
-fig.update_traces(marker_color='{NU_RED}')\n"""
-                        else:
-                            code += f"""# Create bar plot with dual y-axes
-fig = make_subplots(specs=[[{{"secondary_y": True}}]])
-
-# Primary y-axis
-fig.add_trace(
-    go.Bar(
-        x=df['{selected_columns[0]}'],
-        y=df['{selected_columns[1]}'],
-        name='{selected_columns[1]}',
-        marker_color='{NU_RED}'
-    ),
-    secondary_y=False
-)
-
-# Secondary y-axis
-fig.add_trace(
-    go.Bar(
-        x=df['{selected_columns[0]}'],
-        y=df['{selected_columns[2]}'],
-        name='{selected_columns[2]}',
-        marker_color='{NU_GRAY}'
-    ),
-    secondary_y=True
-)
-
-fig.update_layout(
-    title='Multiple Variables by {selected_columns[0]}',
-    xaxis_title='{selected_columns[0]}',
-    yaxis_title='{selected_columns[1]}',
-    yaxis2_title='{selected_columns[2]}',
-    barmode='group'
-)\n"""
-
-                    elif viz_type == 'Histogram':
-                        code += f"""# Create histogram
-fig = px.histogram(
-    data_frame=df,
-    x='{selected_columns[0]}',
-    title='Distribution of {selected_columns[0]}'
-)
-fig.update_traces(marker_color='{NU_RED}')\n"""
-
-                    elif viz_type == 'Line Plot':
-                        if len(selected_columns) == 2:
-                            code += f"""# Create line plot
-fig = px.line(
-    data_frame=df,
-    x='{selected_columns[0]}',
-    y='{selected_columns[1]}',
-    title='{selected_columns[1]} vs {selected_columns[0]}'
-)
-fig.update_traces(line_color='{NU_RED}')\n"""
-                        else:
-                            code += f"""# Create line plot with dual y-axes
-fig = make_subplots(specs=[[{{"secondary_y": True}}]])
-
-# Primary y-axis
-fig.add_trace(
-    go.Scatter(
-        x=df['{selected_columns[0]}'],
-        y=df['{selected_columns[1]}'],
-        name='{selected_columns[1]}',
-        mode='lines',
-        line_color='{NU_RED}'
-    ),
-    secondary_y=False
-)
-
-# Secondary y-axis
-fig.add_trace(
-    go.Scatter(
-        x=df['{selected_columns[0]}'],
-        y=df['{selected_columns[2]}'],
-        name='{selected_columns[2]}',
-        mode='lines',
-        line_color='{NU_GRAY}'
-    ),
-    secondary_y=True
-)
-
-fig.update_layout(
-    title='Multiple Variables vs {selected_columns[0]}',
-    xaxis_title='{selected_columns[0]}',
-    yaxis_title='{selected_columns[1]}',
-    yaxis2_title='{selected_columns[2]}'
-)\n"""
-
-                    elif viz_type == 'Heatmap':
-                        cols_str = "', '".join(selected_columns)
-                        code += f"""# Calculate correlation matrix
-corr_matrix = df[['{cols_str}']].corr()
-
-# Create heatmap
-fig = go.Figure(data=go.Heatmap(
-    z=corr_matrix.values,
-    x=corr_matrix.columns,
-    y=corr_matrix.columns,
-    colorscale='RdBu',
-    zmid=0
-))
-
-fig.update_layout(title='Correlation Heatmap')\n"""
-
-                    # Add sorting code if applicable
-                    if sort_options:
-                        sort_col = sort_options['sort_by']
-                        ascending = sort_options['sort_ascending']
-                        code = f"""# Sort the data
-df = df.sort_values('{sort_col}', ascending={str(ascending)})\n\n""" + code
-
-                    # Add template code
-                    code += """\n# Apply custom template
-custom_template = {
-    'layout': {
-        'plot_bgcolor': 'white',
-        'paper_bgcolor': 'white',
-        'font': {'color': '#000000'},
-        'title': {'font': {'color': '#000000'}},
-        'xaxis': {'gridcolor': '#EEEEEE', 'linecolor': '#6A6A6A'},
-        'yaxis': {'gridcolor': '#EEEEEE', 'linecolor': '#6A6A6A'}
-    }
-}
-fig.update_layout(template=custom_template)\n"""
-
-                    # Display code
-                    st.code(code, language='python')
-                    
-                    # Add download button for the code
-                    st.download_button(
-                        label="Download Code",
-                        data=code,
-                        file_name=f"plotly_{viz_type.lower().replace(' ', '_')}.py",
-                        mime="text/plain"
-                    )
-                    
-                except Exception as e:
-                    st.error(f"Could not create visualization: {str(e)}")
-            elif len(selected_columns) > 0:
-                st.info(f"Please select at least {min_cols} columns for this visualization type")
-    else:
-        st.info("Please upload a dataset or use the sample dataset to begin exploration.")
+                    with col2:
+                        if st.button("📌 Pin to Story Dashboard"):
+                            # Generate unique component ID
+                            component_id = f"viz_{st.session_state.component_counter}"
+                            st.session_state.component_counter += 1
+                            
+                            # Create component data
+                            component_data = {
+                                'title': fig.layout.title.text,
+                                'figure': fig,
+                                'description': viz_description,
+                                'type': 'visualization'
+                            }
+                            
+                            # Add to story components
+                            st.session_state.story_components[component_id] = component_data
+                            st.session_state.component_order.append(component_id)
+                            
+                            st.success("Visualization pinned to Story Dashboard! 📌")
+            
+            except Exception as e:
+                st.error(f"Error creating visualization: {str(e)}")
 
 elif page == "Prediction Models":
     st.title("Prediction Models Lab")
@@ -885,19 +733,8 @@ elif page == "Prediction Models":
         
         # Add Data Profile section
         with st.expander("View Data Profile", expanded=True):
-            profile = get_data_profile(current_data, st.session_state.data)
-            profile_df = format_profile_for_display(profile)
-            
-            # Show warning if there are uncleaned variables
-            needs_cleaning = profile_df[profile_df['Status'].str.contains('Needs Cleaning', na=False)]
-            if not needs_cleaning.empty:
-                st.warning(
-                    "⚠ Some variables still need cleaning. This might affect model performance. "
-                    "Consider cleaning them in the Data Cleaning Lab first."
-                )
-                st.dataframe(needs_cleaning, hide_index=True)
-            else:
-                st.success("✓ All variables have been cleaned!")
+            profile = current_data.describe()
+            st.dataframe(profile)
         
         st.divider()
         
@@ -910,12 +747,12 @@ elif page == "Prediction Models":
         
         if target_col:
             # Get model recommendation
-            recommendation = recommend_model(current_data[target_col])
+            recommendation = "Linear Regression"
             
             st.subheader("Model Recommendation")
-            st.write(recommendation['description'])
+            st.write(recommendation)
             
-            if recommendation['model_type'] != 'none':
+            if recommendation != 'none':
                 # Select features
                 feature_cols = st.multiselect(
                     "Select the variables to use as features:",
@@ -929,116 +766,216 @@ elif page == "Prediction Models":
                         with st.spinner("Training model..."):
                             try:
                                 # Prepare data
-                                data = prepare_data(current_data, target_col, feature_cols)
+                                data = {
+                                    'X': current_data[feature_cols],
+                                    'y': current_data[target_col]
+                                }
                                 
                                 # Train and evaluate model
-                                if recommendation['model_type'] == 'logistic':
-                                    model = train_logistic_model(data['X_train'], data['y_train'])
-                                    results = evaluate_logistic_model(
-                                        model=model,
-                                        X_test=data['X_test'],
-                                        y_test=data['y_test'],
-                                        X_train=data['X_train'],
-                                        y_train=data['y_train'],
-                                        feature_names=data['feature_names']
-                                    )
-                                else:
-                                    model = train_linear_model(data['X_train'], data['y_train'])
-                                    results = evaluate_linear_model(
-                                        model=model,
-                                        X_test=data['X_test'],
-                                        y_test=data['y_test'],
-                                        X_train=data['X_train'],
-                                        y_train=data['y_train'],
-                                        feature_names=data['feature_names']
-                                    )
+                                model = LinearRegression()
+                                model.fit(data['X'], data['y'])
+                                y_pred = model.predict(data['X'])
                                 
                                 # Display results
                                 st.subheader("Model Performance")
-                                
-                                # Display metrics in a formatted table
-                                metrics_df = pd.DataFrame({
-                                    'Metric': list(results['metrics'].keys()),
-                                    'Value': list(results['metrics'].values())
-                                })
-                                st.write("Model Metrics:")
-                                st.dataframe(metrics_df.style.format({'Value': '{:.4f}'}), hide_index=True)
+                                metrics = {
+                                    'R-squared': r2_score(data['y'], y_pred),
+                                    'Mean Squared Error': mean_squared_error(data['y'], y_pred)
+                                }
+                                st.dataframe(pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value']))
                                 
                                 # Display coefficients in a formatted table
                                 st.write("\nModel Coefficients:")
-                                coef_df = pd.DataFrame(results['coefficients'])
-                                
-                                # Format p-values with stars for significance
-                                def format_pvalue(p_val):
-                                    stars = ''
-                                    if p_val < 0.001:
-                                        stars = '***'
-                                    elif p_val < 0.01:
-                                        stars = '**'
-                                    elif p_val < 0.05:
-                                        stars = '*'
-                                    return f"{p_val:.4f}{stars}"
-                                
-                                if recommendation['model_type'] == 'logistic':
-                                    coef_display = coef_df[['Feature', 'Coefficient', 'Odds_Ratio', 'P_Value']]
-                                    coef_display.columns = ['Feature', 'Coefficient', 'Odds Ratio', 'P-value']
-                                else:
-                                    coef_display = coef_df[['Feature', 'Coefficient', 'P_Value']]
-                                    coef_display.columns = ['Feature', 'Coefficient', 'P-value']
-                                
-                                # Apply styling
-                                styled_coef = coef_display.style.format({
-                                    'Coefficient': '{:.4f}',
-                                    'Odds Ratio': '{:.4f}' if 'Odds Ratio' in coef_display.columns else None,
-                                    'P-value': format_pvalue
+                                coef_df = pd.DataFrame({
+                                    'Feature': feature_cols,
+                                    'Coefficient': model.coef_
                                 })
-                                
-                                # Add significance level note
-                                st.dataframe(styled_coef, hide_index=True)
-                                st.write("""
-                                **Significance levels:**  
-                                \* p < 0.05  
-                                \** p < 0.01  
-                                \*** p < 0.001
-                                """)
-                                
-                                # Display confusion matrix for logistic regression
-                                if recommendation['model_type'] == 'logistic' and 'confusion_matrix' in results:
-                                    st.subheader("Confusion Matrix")
-                                    conf_matrix = np.array(results['confusion_matrix'])
-                                    
-                                    # Create confusion matrix heatmap
-                                    fig = go.Figure(data=go.Heatmap(
-                                        z=conf_matrix,
-                                        x=['Predicted 0', 'Predicted 1'],
-                                        y=['Actual 0', 'Actual 1'],
-                                        text=conf_matrix,
-                                        texttemplate="%{text}",
-                                        textfont={"size": 16},
-                                        hoverongaps=False,
-                                        colorscale='RdBu'
-                                    ))
-                                    
-                                    fig.update_layout(
-                                        title='Confusion Matrix',
-                                        xaxis_title='Predicted Label',
-                                        yaxis_title='Actual Label',
-                                        width=500,
-                                        height=500
-                                    )
-                                    
-                                    st.plotly_chart(fig)
-                                
-                                # Display feature importance
-                                st.subheader("Feature Importance")
-                                importance = get_feature_importance(
-                                    results['coefficients'],
-                                    recommendation['model_type']
-                                )
-                                
-                                for feat in importance:
-                                    with st.expander(f"**{feat['feature']}** (coefficient: {feat['coefficient']:.4f})"):
-                                        st.write(feat['interpretation'])
+                                st.dataframe(coef_df)
                             
                             except Exception as e:
                                 st.error(f"An error occurred while training the model: {str(e)}")
+
+elif page == "Data Optimization Lab":
+    st.title("Data Optimization Lab")
+    
+    if st.session_state.data is None:
+        st.error("Please upload a dataset first!")
+    else:
+        # Get current data
+        current_data = st.session_state.cleaned_data if st.session_state.cleaned_data is not None else st.session_state.data
+        
+        # Create tabs
+        tab1, tab2 = st.tabs([
+            "Dimensionality Reduction",
+            "Feature Selection"
+        ])
+        
+        # Tab 1: Dimensionality Reduction
+        with tab1:
+            st.header("Dimensionality Reduction with PCA")
+            
+            # Get numeric columns
+            numeric_cols = current_data.select_dtypes(include=[np.number]).columns.tolist()
+            
+            if len(numeric_cols) < 2:
+                st.warning("Need at least 2 numeric columns for PCA analysis.")
+            else:
+                # Select features for PCA
+                selected_features = st.multiselect(
+                    "Select features for PCA",
+                    numeric_cols,
+                    default=numeric_cols[:min(5, len(numeric_cols))]
+                )
+                
+                if len(selected_features) < 2:
+                    st.warning("Please select at least 2 features for PCA analysis.")
+                else:
+                    try:
+                        # Prepare data for PCA
+                        X = current_data[selected_features].copy()
+                        
+                        # Handle missing values if any
+                        if X.isnull().any().any():
+                            st.warning("⚠️ Dataset contains missing values. They will be filled with median values.")
+                            X = X.fillna(X.median())
+                        
+                        # Scale the data
+                        scaler = StandardScaler()
+                        X_scaled = scaler.fit_transform(X)
+                        
+                        # Perform PCA
+                        n_components = min(len(selected_features), 10)
+                        pca = PCA(n_components=n_components)
+                        X_pca = pca.fit_transform(X_scaled)
+                        
+                        # Calculate explained variance ratio
+                        explained_variance_ratio = pca.explained_variance_ratio_
+                        cumulative_variance_ratio = np.cumsum(explained_variance_ratio)
+                        
+                        # Plot explained variance ratio
+                        fig = make_subplots(rows=1, cols=2,
+                                          subplot_titles=('Explained Variance Ratio',
+                                                        'Cumulative Explained Variance'))
+                        
+                        # Individual explained variance
+                        fig.add_trace(
+                            go.Bar(x=[f'PC{i+1}' for i in range(n_components)],
+                                  y=explained_variance_ratio,
+                                  name='Individual'),
+                            row=1, col=1
+                        )
+                        
+                        # Cumulative explained variance
+                        fig.add_trace(
+                            go.Scatter(x=[f'PC{i+1}' for i in range(n_components)],
+                                     y=cumulative_variance_ratio,
+                                     name='Cumulative',
+                                     mode='lines+markers'),
+                            row=1, col=2
+                        )
+                        
+                        fig.update_layout(height=400, showlegend=False,
+                                        title_text="PCA Analysis Results")
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Show explained variance table
+                        variance_df = pd.DataFrame({
+                            'Principal Component': [f'PC{i+1}' for i in range(n_components)],
+                            'Explained Variance Ratio': explained_variance_ratio,
+                            'Cumulative Variance Ratio': cumulative_variance_ratio
+                        })
+                        st.write("Explained Variance Details:")
+                        st.dataframe(
+                            variance_df.style.format({
+                                'Explained Variance Ratio': '{:.3f}',
+                                'Cumulative Variance Ratio': '{:.3f}'
+                            })
+                        )
+                        
+                        # Feature importance in principal components
+                        loadings = pd.DataFrame(
+                            pca.components_.T,
+                            columns=[f'PC{i+1}' for i in range(n_components)],
+                            index=selected_features
+                        )
+                        
+                        st.subheader("Feature Importance in Principal Components")
+                        fig = px.imshow(loadings,
+                                      labels=dict(x="Principal Component", y="Feature"),
+                                      title="PCA Loadings Heatmap",
+                                      color_continuous_scale="RdBu")
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Option to save transformed data
+                        n_components_to_keep = st.slider(
+                            "Select number of components to keep",
+                            min_value=2,
+                            max_value=n_components,
+                            value=min(3, n_components),
+                            help="Choose how many principal components to keep in the transformed data"
+                        )
+                        
+                        if st.button("Apply PCA Transformation"):
+                            # Create new dataframe with PCA results
+                            pca_cols = [f'PC{i+1}' for i in range(n_components_to_keep)]
+                            pca_df = pd.DataFrame(
+                                X_pca[:, :n_components_to_keep],
+                                columns=pca_cols,
+                                index=current_data.index
+                            )
+                            
+                            # Add non-numeric columns back
+                            non_numeric_cols = [col for col in current_data.columns if col not in selected_features]
+                            if non_numeric_cols:
+                                pca_df = pd.concat([pca_df, current_data[non_numeric_cols]], axis=1)
+                            
+                            # Update session state
+                            st.session_state.cleaned_data = pca_df
+                            st.success(f"Data transformed! Reduced {len(selected_features)} features to {n_components_to_keep} principal components.")
+                            
+                            # Show preview of transformed data
+                            st.write("Preview of transformed data:")
+                            st.dataframe(pca_df.head())
+                            
+                    except Exception as e:
+                        st.error(f"An error occurred during PCA analysis: {str(e)}")
+        
+        # Tab 2: Feature Selection
+        with tab2:
+            st.header("Feature Selection")
+            st.info("Feature selection tools will be available in the next update!")
+
+elif page == "Story Dashboard":
+    st.header("Data Storytelling Dashboard")
+    
+    # Initialize storytelling components if not exists
+    if 'story_components' not in st.session_state:
+        st.session_state.story_components = {}
+    
+    # Display components in order
+    if st.session_state.component_order:
+        for component_id in st.session_state.component_order:
+            if component_id in st.session_state.story_components:
+                component = st.session_state.story_components[component_id]
+                
+                # Create a container for the component
+                with st.container():
+                    st.markdown(f"### {component['title']}")
+                    
+                    # Display visualization if it exists
+                    if 'figure' in component:
+                        st.plotly_chart(component['figure'])
+                    
+                    # Display description if it exists
+                    if 'description' in component:
+                        st.markdown(component['description'])
+                    
+                    # Add remove button
+                    if st.button(f"Remove from Dashboard 🗑️", key=f"remove_{component_id}"):
+                        st.session_state.component_order.remove(component_id)
+                        del st.session_state.story_components[component_id]
+                        st.experimental_rerun()
+                    
+                    st.markdown("---")  # Add separator between components
+    else:
+        st.info("Your data story will appear here. Pin visualizations and insights from the Data Exploration Lab to build your story!")
