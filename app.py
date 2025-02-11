@@ -64,6 +64,43 @@ if 'story_components' not in st.session_state:
 if 'component_counter' not in st.session_state:
     st.session_state.component_counter = 0
 
+# Data loading and preprocessing
+if 'data' not in st.session_state:
+    try:
+        # Load sample data
+        data = pd.read_csv('sample_data.csv')
+        
+        # Convert date column to datetime if it exists
+        if 'Date' in data.columns:
+            data['Date'] = pd.to_datetime(data['Date'])
+        
+        # Convert categorical columns
+        categorical_cols = ['Show', 'Gender', 'Day']
+        for col in categorical_cols:
+            if col in data.columns:
+                data[col] = data[col].astype('category')
+        
+        # Convert binary columns
+        binary_cols = ['Completed']
+        for col in binary_cols:
+            if col in data.columns:
+                data[col] = data[col].astype(int)
+        
+        st.session_state.data = data
+        st.session_state.cleaned_data = data.copy()
+        
+        # Show dataset info
+        st.success("Netflix viewing dataset loaded successfully!")
+        st.write("Dataset Overview:")
+        st.write({
+            'Total Records': len(data),
+            'Numeric Columns': list(data.select_dtypes(include=[np.number]).columns),
+            'Categorical Columns': list(data.select_dtypes(include=['category']).columns),
+            'Date Columns': [col for col in data.columns if pd.api.types.is_datetime64_any_dtype(data[col])]
+        })
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+
 # Title and description
 st.title('Data Mining Application')
 st.markdown("""
@@ -179,113 +216,77 @@ if page == 'Data Cleaning Lab':
                     # Display method description
                     st.markdown(method_descriptions[method])
                     
-                    # Method-specific parameters and processing
-                    new_data = current_data.copy()
+                    # Show code for the selected method
+                    st.subheader("Python Implementation")
+                    st.write("Here's how to implement this cleaning method:")
                     
-                    if method == "constant":
-                        constant_value = st.text_input("Enter constant value:")
-                        if constant_value and st.button("Process Missing Values"):
-                            try:
-                                if pd.api.types.is_numeric_dtype(new_data[selected_col]):
-                                    constant_value = float(constant_value)
-                                new_data[selected_col].fillna(constant_value, inplace=True)
-                                st.session_state.cleaned_data = new_data
-                                st.success(f"Missing values in {selected_col} have been replaced with {constant_value}")
-                            except ValueError:
-                                st.error("Please enter a valid value")
-                    
-                    elif method == "kmeans":
-                        # Get correlation candidates for better K-means clustering
+                    # Get correlated columns for k-means if needed
+                    if method == 'kmeans':
                         corr_info = get_correlation_candidates(current_data, selected_col)
-                        
-                        if 'error' in corr_info:
-                            st.warning(corr_info['error'])
+                        if not corr_info.get('error'):
+                            correlated_cols = corr_info['best_candidates'][:2] if corr_info['best_candidates'] else []
                         else:
-                            # Display recommendations
-                            st.subheader("K-means Clustering Recommendations")
-                            for rec in corr_info['recommendations']:
-                                st.info(rec)
-                            
-                            # Allow selection of correlated columns
-                            if corr_info['best_candidates']:
-                                correlated_cols = st.multiselect(
-                                    "Select correlated columns for K-means clustering:",
-                                    corr_info['best_candidates'],
-                                    default=corr_info['best_candidates'][:2]
-                                )
-                            else:
-                                correlated_cols = []
-                                st.warning("No strongly correlated columns found. K-means will use only the target column.")
-                            
-                            if st.button("Process Missing Values"):
-                                try:
-                                    with st.spinner("Applying K-means imputation..."):
-                                        # Process missing values
-                                        result = handle_missing_values(
-                                            current_data,
-                                            selected_col,
-                                            method="kmeans",
-                                            correlated_columns=correlated_cols
-                                        )
-                                        
-                                        # Update session state
-                                        st.session_state.cleaned_data = result
-                                        
-                                        # Show the code used
-                                        st.subheader("Python Code Used")
-                                        st.code(get_imputation_code(
-                                            selected_col,
-                                            method="kmeans",
-                                            correlated_columns=correlated_cols
-                                        ), language="python")
-                                        
-                                        # Show success message
-                                        st.success("Missing values processed successfully!")
-                                        
-                                except Exception as e:
-                                    st.error(f"Error during K-means imputation: {str(e)}")
+                            correlated_cols = []
+                    else:
+                        correlated_cols = None
                     
-                    elif method == "drop":
-                        if st.button("Process Missing Values"):
-                            new_data = new_data.dropna(subset=[selected_col])
-                            st.session_state.cleaned_data = new_data
-                            st.success(f"Rows with missing values in {selected_col} have been dropped")
-                    
-                    else:  # mean, median, mode
-                        if st.button("Process Missing Values"):
-                            if method == "mean" and pd.api.types.is_numeric_dtype(new_data[selected_col]):
-                                new_data[selected_col].fillna(new_data[selected_col].mean(), inplace=True)
-                            elif method == "median" and pd.api.types.is_numeric_dtype(new_data[selected_col]):
-                                new_data[selected_col].fillna(new_data[selected_col].median(), inplace=True)
-                            elif method == "mode":
-                                new_data[selected_col].fillna(new_data[selected_col].mode()[0], inplace=True)
-                            else:
-                                st.error(f"{method} imputation is only applicable to numeric columns")
-                                st.stop()
-                            
-                            st.session_state.cleaned_data = new_data
-                            st.success(f"Missing values in {selected_col} have been imputed using {method}")
-                    
-                    # Show before/after comparison
-                    if 'cleaned_data' in st.session_state:
-                        st.write("### Before vs After Imputation")
-                        col1, col2 = st.columns(2)
+                    # Get and display the code
+                    try:
+                        method_code = get_imputation_code(
+                            selected_col,
+                            method=method,
+                            correlated_columns=correlated_cols
+                        )
+                        st.code(method_code, language="python")
+                    except Exception as e:
+                        st.error(f"Error generating code example: {str(e)}")
                         
-                        with col1:
-                            st.write("Before:")
-                            if pd.api.types.is_numeric_dtype(st.session_state.data[selected_col]):
-                                fig1 = px.histogram(st.session_state.data[selected_col], title="Original Distribution")
-                                st.plotly_chart(fig1)
-                            else:
-                                st.write(st.session_state.data[selected_col].value_counts())
+                    # Process the data
+                    if st.button("Process Missing Values"):
+                        try:
+                            with st.spinner("Processing..."):
+                                result = handle_missing_values(
+                                    current_data,
+                                    selected_col,
+                                    method=method,
+                                    correlated_columns=correlated_cols
+                                )
                                 
-                        with col2:
-                            st.write("After:")
-                            if pd.api.types.is_numeric_dtype(st.session_state.cleaned_data[selected_col]):
-                                fig2 = px.histogram(st.session_state.cleaned_data[selected_col], title="Imputed Distribution")
-                                st.plotly_chart(fig2)
-                            else:
-                                st.write(st.session_state.cleaned_data[selected_col].value_counts())
+                                # Update session state
+                                st.session_state.cleaned_data = result
+                                
+                                # Show success message with statistics
+                                original_missing = current_data[selected_col].isna().sum()
+                                remaining_missing = result[selected_col].isna().sum()
+                                st.success(f"""
+                                    Missing values processed successfully!
+                                    - Original missing values: {original_missing}
+                                    - Remaining missing values: {remaining_missing}
+                                    - Values imputed: {original_missing - remaining_missing}
+                                """)
+                                
+                                # Show before/after comparison
+                                st.write("### Before vs After Imputation")
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.write("Before:")
+                                    if pd.api.types.is_numeric_dtype(current_data[selected_col]):
+                                        fig1 = px.histogram(current_data[selected_col], title="Original Distribution")
+                                        st.plotly_chart(fig1)
+                                    else:
+                                        st.write(current_data[selected_col].value_counts())
+                                
+                                with col2:
+                                    st.write("After:")
+                                    if pd.api.types.is_numeric_dtype(result[selected_col]):
+                                        fig2 = px.histogram(result[selected_col], title="Imputed Distribution")
+                                        st.plotly_chart(fig2)
+                                    else:
+                                        st.write(result[selected_col].value_counts())
+                                
+                        except Exception as e:
+                            st.error(f"Error processing missing values: {str(e)}")
         
         with clean_tab2:
             st.header("Outlier Detection and Treatment")

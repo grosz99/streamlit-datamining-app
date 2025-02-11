@@ -231,34 +231,44 @@ print(processed_stats)"""
 
 def get_correlation_candidates(df, target_column):
     """
-    Find columns that might be good candidates for correlation-based imputation
+    Find columns that are correlated with the target column for better imputation
     
     Parameters:
     -----------
     df : pandas.DataFrame
         Input dataframe
     target_column : str
-        Column name to find correlations for
+        Column to find correlations for
     
     Returns:
     --------
     dict
         Dictionary containing correlation information and recommendations
     """
+    # Handle datetime columns by converting to numeric (timestamp)
+    df_numeric = df.copy()
+    for col in df.select_dtypes(include=['datetime64']).columns:
+        df_numeric[col] = df_numeric[col].astype(np.int64) // 10**9
+    
+    # Convert categorical columns to numeric using label encoding
+    for col in df.select_dtypes(include=['category']).columns:
+        df_numeric[col] = pd.Categorical(df_numeric[col]).codes
+    
     # Get numeric columns only
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    numeric_cols = df_numeric.select_dtypes(include=[np.number]).columns
     if target_column not in numeric_cols:
         return {
             'error': 'Target column must be numeric for correlation analysis',
             'correlations': [],
-            'recommendations': []
+            'recommendations': [],
+            'best_candidates': []
         }
     
     # Calculate correlations
     correlations = []
     for col in numeric_cols:
         if col != target_column:
-            correlation = df[[target_column, col]].corr().iloc[0, 1]
+            correlation = df_numeric[[target_column, col]].corr().iloc[0, 1]
             if not np.isnan(correlation):
                 correlations.append((col, abs(correlation)))
     
@@ -279,6 +289,16 @@ def get_correlation_candidates(df, target_column):
     else:
         recommendations.append("No strong correlations found. Consider using simple imputation methods instead")
     
+    # Add Netflix-specific recommendations
+    if 'Time Watched' in df.columns:
+        recommendations.append("\nNetflix-specific recommendations:")
+        if 'Completed' in df.columns:
+            recommendations.append("- Consider using 'Completed' status to help predict viewing times")
+        if 'Time of Day' in df.columns:
+            recommendations.append("- 'Time of Day' might indicate viewing patterns")
+        if 'Season' in df.columns and 'Episode' in df.columns:
+            recommendations.append("- 'Season' and 'Episode' numbers might show binge-watching patterns")
+    
     return {
         'correlations': correlations,
         'recommendations': recommendations,
@@ -286,66 +306,151 @@ def get_correlation_candidates(df, target_column):
     }
 
 def get_imputation_code(column, method='median', correlated_columns=None):
-    """Generate Python code for the imputation method used"""
-    code_snippets = {
-        'mean': f"# Mean imputation\ndf['{column}'] = df['{column}'].fillna(df['{column}'].mean())",
-        'median': f"# Median imputation\ndf['{column}'] = df['{column}'].fillna(df['{column}'].median())",
-        'remove': f"# Remove rows with missing values\ndf = df.dropna(subset=['{column}'])",
-    }
+    """
+    Generate Python code for the imputation method used
     
-    if method == 'kmeans':
+    Parameters:
+    -----------
+    column : str
+        Column name to impute
+    method : str
+        Imputation method ('mean', 'median', 'mode', 'remove', 'kmeans')
+    correlated_columns : list, optional
+        List of correlated columns for K-means imputation
+    
+    Returns:
+    --------
+    str
+        Generated Python code for the imputation method
+    """
+    if method == 'mean':
+        code = f"""# Mean imputation for column '{column}'
+import pandas as pd
+import numpy as np
+
+def impute_with_mean(df, column='{column}'):
+    '''
+    Impute missing values with column mean
+    '''
+    result = df.copy()
+    column_mean = result[column].mean()
+    result[column] = result[column].fillna(column_mean)
+    return result
+
+# Example usage:
+# data = pd.read_csv('your_data.csv')
+# result = impute_with_mean(data, '{column}')"""
+
+    elif method == 'median':
+        code = f"""# Median imputation for column '{column}'
+import pandas as pd
+import numpy as np
+
+def impute_with_median(df, column='{column}'):
+    '''
+    Impute missing values with column median
+    '''
+    result = df.copy()
+    column_median = result[column].median()
+    result[column] = result[column].fillna(column_median)
+    return result
+
+# Example usage:
+# data = pd.read_csv('your_data.csv')
+# result = impute_with_median(data, '{column}')"""
+
+    elif method == 'mode':
+        code = f"""# Mode imputation for column '{column}'
+import pandas as pd
+import numpy as np
+
+def impute_with_mode(df, column='{column}'):
+    '''
+    Impute missing values with column mode (most frequent value)
+    '''
+    result = df.copy()
+    column_mode = result[column].mode().iloc[0]  # Get first mode if multiple exist
+    result[column] = result[column].fillna(column_mode)
+    return result
+
+# Example usage:
+# data = pd.read_csv('your_data.csv')
+# result = impute_with_mode(data, '{column}')"""
+
+    elif method == 'remove':
+        code = f"""# Remove rows with missing values in column '{column}'
+import pandas as pd
+import numpy as np
+
+def remove_missing_values(df, column='{column}'):
+    '''
+    Remove rows with missing values in specified column
+    '''
+    result = df.copy()
+    original_rows = len(result)
+    result = result.dropna(subset=[column])
+    return result
+
+# Example usage:
+# data = pd.read_csv('your_data.csv')
+# result = remove_missing_values(data, '{column}')"""
+
+    elif method == 'kmeans':
+        col_list = f"['{column}']"
         if correlated_columns:
-            cols_str = f"['{column}', '" + "', '".join(correlated_columns) + "']"
-            code = f"""# K-means imputation with correlated features
+            col_list = f"['{column}', '" + "', '".join(correlated_columns) + "']"
+        
+        code = f"""# K-means imputation for column '{column}'
+import pandas as pd
+import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-# Prepare data for clustering
-columns_to_use = {cols_str}
-data_for_clustering = df[columns_to_use].copy()
-missing_mask = data_for_clustering['{column}'].isna()
-clean_data = data_for_clustering[~missing_mask]
-
-# Standardize the data
-scaler = StandardScaler()
-scaled_data = scaler.fit_transform(clean_data)
-
-# Perform K-means clustering
-n_clusters = min(3, len(clean_data) // 2)
-kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-kmeans.fit(scaled_data)
-
-# Impute missing values using cluster centers
-for idx in df[missing_mask].index:
-    row_data = df.loc[idx, columns_to_use[1:]].values.reshape(1, -1)
-    if not np.isnan(row_data).any():
-        row_scaled = scaler.transform(row_data)
-        cluster = kmeans.predict(row_scaled)[0]
-        imputed_value = scaler.inverse_transform(kmeans.cluster_centers_)[cluster][0]
-        df.at[idx, '{column}'] = imputed_value"""
-        else:
-            code = f"""# Simple K-means imputation
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-
-# Prepare data
-data = df[['{column}']].copy()
-missing_mask = data['{column}'].isna()
-clean_data = data[~missing_mask]
-
-# Standardize and cluster
-scaler = StandardScaler()
-scaled_data = scaler.fit_transform(clean_data)
-kmeans = KMeans(n_clusters=3, random_state=42)
-kmeans.fit(scaled_data)
-
-# Impute with mean of cluster centers
-centers_unscaled = scaler.inverse_transform(kmeans.cluster_centers_)
-imputed_value = np.mean(centers_unscaled)
-df['{column}'] = df['{column}'].fillna(imputed_value)"""
-        return code
+def impute_with_kmeans(df, target_column='{column}', columns_to_use={col_list}, n_clusters=3):
+    '''
+    Impute missing values using K-means clustering
+    '''
+    result = df.copy()
+    data_for_clustering = result[columns_to_use].copy()
+    missing_mask = data_for_clustering[target_column].isna()
     
-    return code_snippets.get(method, "# No code available for this method")
+    if missing_mask.all():
+        raise ValueError("All values are missing in target column")
+    
+    complete_cases = data_for_clustering[~missing_mask]
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(complete_cases)
+    
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    kmeans.fit(scaled_data)
+    
+    def get_cluster_mean(row):
+        if row[target_column] is not pd.NA:
+            return row[target_column]
+        
+        row_data = row[columns_to_use[1:]].values.reshape(1, -1)
+        if not np.isnan(row_data).any():
+            row_scaled = scaler.transform(row_data)
+            cluster = kmeans.predict(row_scaled)[0]
+            cluster_mask = kmeans.labels_ == cluster
+            return complete_cases[target_column][cluster_mask].mean()
+        return None
+    
+    result.loc[missing_mask, target_column] = result[missing_mask].apply(
+        get_cluster_mean, axis=1
+    )
+    return result
+
+# Example usage:
+# data = pd.read_csv('your_data.csv')
+# result = impute_with_kmeans(
+#     data,
+#     target_column='{column}',
+#     columns_to_use={col_list},
+#     n_clusters=3
+# )"""
+
+    return code
 
 def get_data_profile(df, original_df=None):
     """
