@@ -55,6 +55,8 @@ if 'data' not in st.session_state:
     st.session_state.data = None
 if 'cleaned_data' not in st.session_state:
     st.session_state.cleaned_data = None
+if 'original_data' not in st.session_state:
+    st.session_state.original_data = None
 if 'pinned_visualizations' not in st.session_state:
     st.session_state.pinned_visualizations = []
 if 'component_order' not in st.session_state:
@@ -63,6 +65,12 @@ if 'story_components' not in st.session_state:
     st.session_state.story_components = {}
 if 'component_counter' not in st.session_state:
     st.session_state.component_counter = 0
+
+def update_cleaned_data(df):
+    """Update the cleaned data state and store original if not already stored"""
+    if st.session_state.original_data is None:
+        st.session_state.original_data = st.session_state.data.copy()
+    st.session_state.cleaned_data = df.copy()
 
 # Data loading and preprocessing
 if 'data' not in st.session_state:
@@ -158,9 +166,54 @@ if page == 'Data Cleaning Lab':
         # Get current data
         current_data = st.session_state.cleaned_data if st.session_state.cleaned_data is not None else st.session_state.data
         
+        # Add Reference Guide section
+        with st.expander("▲ Reference Guide", expanded=True):
+            st.subheader("Data Cleaning Guide")
+            try:
+                from pptx import Presentation
+                import os
+                
+                # Load embedded presentation
+                DECK_PATH = os.path.join("docs", "cleaning_guide.pptx")
+                if not os.path.exists(DECK_PATH):
+                    st.error(f"Could not find presentation at {DECK_PATH}")
+                else:
+                    prs = Presentation(DECK_PATH)
+                    
+                    # Navigation controls
+                    if 'slide_page' not in st.session_state:
+                        st.session_state.slide_page = 0
+                    
+                    col1, col2, col3 = st.columns([1,3,1])
+                    with col1:
+                        if st.button("← Previous"):
+                            if st.session_state.slide_page > 0:
+                                st.session_state.slide_page -= 1
+                    with col2:
+                        st.markdown(f"**Slide {st.session_state.slide_page + 1} of {len(prs.slides)}**")
+                    with col3:
+                        if st.button("Next →"):
+                            if st.session_state.slide_page < len(prs.slides)-1:
+                                st.session_state.slide_page += 1
+                    
+                    # Display current slide content
+                    slide = prs.slides[st.session_state.slide_page]
+                    content = []
+                    
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text") and shape.text.strip():
+                            content.append(shape.text.strip())
+                    
+                    st.markdown("---")
+                    for text in content:
+                        st.markdown(text)
+                
+            except Exception as e:
+                st.error(f"Error loading slide deck: {str(e)}")
+        
         # Tabs for different cleaning operations
-        clean_tab1, clean_tab2, clean_tab3, clean_tab4 = st.tabs([
-            "Missing Values", "Outliers", "Duplicates", "Data Type Conversion"
+        clean_tab1, clean_tab2, clean_tab3, clean_tab4, clean_tab5 = st.tabs([
+            "Missing Values", "Outliers", "Duplicates", "Data Type Conversion", "Data Profile"
         ])
         
         # Tab 1: Missing Values
@@ -253,7 +306,7 @@ if page == 'Data Cleaning Lab':
                                 )
                                 
                                 # Update session state
-                                st.session_state.cleaned_data = result
+                                update_cleaned_data(result)
                                 
                                 # Show success message with statistics
                                 original_missing = current_data[selected_col].isna().sum()
@@ -383,7 +436,7 @@ if page == 'Data Cleaning Lab':
                         
                         # Add button to apply changes
                         if st.button("Apply Outlier Treatment"):
-                            st.session_state.cleaned_data = results['df']
+                            update_cleaned_data(results['df'])
                             st.success(f"Successfully handled {summary['n_outliers']} outliers in {selected_col}")
                             st.experimental_rerun()
                     
@@ -420,7 +473,7 @@ if page == 'Data Cleaning Lab':
                 
                 if treatment != "None" and st.button("Apply Treatment"):
                     if treatment == "Remove":
-                        st.session_state.cleaned_data = st.session_state.cleaned_data.drop_duplicates(subset=duplicate_subset)
+                        update_cleaned_data(st.session_state.cleaned_data.drop_duplicates(subset=duplicate_subset))
                     st.success(f"Applied {treatment} treatment to duplicates")
                     st.experimental_rerun()
         
@@ -449,12 +502,64 @@ if page == 'Data Cleaning Lab':
                 # Apply conversion
                 if st.button("Apply Conversion"):
                     try:
-                        st.session_state.cleaned_data[selected_col] = st.session_state.cleaned_data[selected_col].astype(available_types[[conversion_options[t] for t in available_types].index(new_type)])
+                        update_cleaned_data(st.session_state.cleaned_data.astype({selected_col: available_types[[conversion_options[t] for t in available_types].index(new_type)]}))
                         st.success(f"Converted {selected_col} to {new_type}")
                     except ValueError as e:
                         st.error(f"Conversion failed: {str(e)}")
             else:
                 st.info("No other data types available for conversion")
+
+        with clean_tab5:
+            st.subheader("Data Profile Comparison")
+            
+            if st.session_state.cleaned_data is not None:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### Original Dataset")
+                    st.write("**Basic Statistics:**")
+                    st.write(f"- Rows: {len(st.session_state.data)}")
+                    st.write(f"- Columns: {len(st.session_state.data.columns)}")
+                    st.write(f"- Missing Values: {st.session_state.data.isna().sum().sum()}")
+                    st.write(f"- Duplicates: {st.session_state.data.duplicated().sum()}")
+                    
+                    st.write("\n**Column Types:**")
+                    for col in st.session_state.data.columns:
+                        st.write(f"- {col}: {st.session_state.data[col].dtype}")
+                    
+                    if st.checkbox("Show Original Data Sample"):
+                        st.dataframe(st.session_state.data.head(), use_container_width=True)
+                
+                with col2:
+                    st.markdown("### Cleaned Dataset")
+                    st.write("**Basic Statistics:**")
+                    st.write(f"- Rows: {len(st.session_state.cleaned_data)}")
+                    st.write(f"- Columns: {len(st.session_state.cleaned_data.columns)}")
+                    st.write(f"- Missing Values: {st.session_state.cleaned_data.isna().sum().sum()}")
+                    st.write(f"- Duplicates: {st.session_state.cleaned_data.duplicated().sum()}")
+                    
+                    st.write("\n**Column Types:**")
+                    for col in st.session_state.cleaned_data.columns:
+                        st.write(f"- {col}: {st.session_state.cleaned_data[col].dtype}")
+                    
+                    if st.checkbox("Show Cleaned Data Sample"):
+                        st.dataframe(st.session_state.cleaned_data.head(), use_container_width=True)
+                
+                # Show changes summary
+                st.markdown("### Changes Summary")
+                changes = {
+                    "Rows Removed": len(st.session_state.data) - len(st.session_state.cleaned_data),
+                    "Missing Values Handled": (st.session_state.data.isna().sum().sum() - 
+                                            st.session_state.cleaned_data.isna().sum().sum()),
+                    "Duplicates Removed": (st.session_state.data.duplicated().sum() - 
+                                         st.session_state.cleaned_data.duplicated().sum())
+                }
+                
+                for change, value in changes.items():
+                    if value > 0:
+                        st.write(f"- {change}: {value}")
+            else:
+                st.info("No cleaning operations have been performed yet. The cleaned dataset will appear here after you apply some cleaning operations.")
 
 elif page == 'Data Exploration Lab':
     st.title('Data Exploration Lab')
@@ -973,7 +1078,7 @@ elif page == "Data Optimization Lab":
                                 pca_df = pd.concat([pca_df, current_data[non_numeric_cols]], axis=1)
                             
                             # Update session state
-                            st.session_state.cleaned_data = pca_df
+                            update_cleaned_data(pca_df)
                             st.success(f"Data transformed! Reduced {len(selected_features)} features to {n_components_to_keep} principal components.")
                             
                             # Show preview of transformed data
