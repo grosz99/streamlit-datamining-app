@@ -102,26 +102,132 @@ def handle_outliers(df, column, std_multiplier=3.0, method='remove'):
     
     Returns:
     --------
-    tuple(pandas.DataFrame, pandas.Series)
-        Processed dataframe and boolean mask of outlier positions
+    dict
+        Dictionary containing:
+        - 'df': Processed dataframe
+        - 'outliers': Boolean mask of outlier positions
+        - 'summary': Dictionary with outlier statistics
+        - 'code': Python code used for outlier handling
     """
     result_df = df.copy()
     
+    # Convert to numeric if not already
+    if not pd.api.types.is_numeric_dtype(df[column]):
+        try:
+            result_df[column] = pd.to_numeric(result_df[column])
+        except:
+            raise ValueError(f"Column {column} cannot be converted to numeric type")
+    
+    # Remove NaN values for statistics calculation
+    clean_data = result_df[column].dropna()
+    
+    if len(clean_data) == 0:
+        raise ValueError(f"No valid numeric data in column {column}")
+    
     # Calculate statistics
-    mean = df[column].mean()
-    std = df[column].std()
+    mean = clean_data.mean()
+    std = clean_data.std()
     threshold = std_multiplier * std
     
     # Identify outliers
-    outliers = np.abs(df[column] - mean) > threshold
+    outliers = np.abs(result_df[column] - mean) > threshold
+    n_outliers = outliers.sum()
     
+    # Generate summary statistics
+    summary = {
+        'total_rows': len(df),
+        'n_outliers': int(n_outliers),
+        'outlier_percentage': float((n_outliers / len(df)) * 100),
+        'threshold_upper': float(mean + threshold),
+        'threshold_lower': float(mean - threshold)
+    }
+    
+    # Generate detailed implementation code
+    code = f"""import pandas as pd
+import numpy as np
+
+def detect_and_handle_outliers(df, column='{column}', std_multiplier={std_multiplier}, method='{method}'):
+    '''
+    Detect and handle outliers in a DataFrame column using the standard deviation method.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        Input DataFrame
+    column : str
+        Name of the column to process
+    std_multiplier : float
+        Number of standard deviations to use as threshold
+    method : str
+        'remove' or 'cap' outliers
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        Processed DataFrame with outliers handled
+    '''
+    # Make a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Ensure numeric type
+    if not pd.api.types.is_numeric_dtype(result_df[column]):
+        result_df[column] = pd.to_numeric(result_df[column], errors='coerce')
+    
+    # Calculate statistics using non-NaN values
+    clean_data = result_df[column].dropna()
+    mean = clean_data.mean()
+    std = clean_data.std()
+    threshold = std_multiplier * std
+    
+    # Identify outliers
+    outliers = np.abs(result_df[column] - mean) > threshold
+    
+    if method == 'remove':
+        # Remove rows with outliers
+        result_df = result_df[~outliers]
+    elif method == 'cap':
+        # Cap outliers at threshold values
+        upper_bound = mean + threshold
+        lower_bound = mean - threshold
+        result_df.loc[result_df[column] > upper_bound, column] = upper_bound
+        result_df.loc[result_df[column] < lower_bound, column] = lower_bound
+    
+    return result_df
+
+# Example usage:
+# Load your data
+df = pd.read_csv('your_data.csv')  # Replace with your data source
+
+# Process outliers
+processed_df = detect_and_handle_outliers(
+    df=df,
+    column='{column}',
+    std_multiplier={std_multiplier},
+    method='{method}'
+)
+
+# Summary statistics for verification
+original_stats = df['{column}'].describe()
+processed_stats = processed_df['{column}'].describe()
+
+print("Original Statistics:")
+print(original_stats)
+print("\\nProcessed Statistics:")
+print(processed_stats)"""
+
+    # Handle outliers based on method
     if method == 'remove':
         result_df = result_df[~outliers]
     elif method == 'cap':
-        result_df.loc[df[column] > mean + threshold, column] = mean + threshold
-        result_df.loc[df[column] < mean - threshold, column] = mean - threshold
+        result_df.loc[result_df[column] > mean + threshold, column] = mean + threshold
+        result_df.loc[result_df[column] < mean - threshold, column] = mean - threshold
     
-    return result_df, outliers
+    return {
+        'df': result_df,
+        'outliers': outliers,
+        'summary': summary,
+        'code': code
+    }
 
 def get_correlation_candidates(df, target_column):
     """
@@ -136,26 +242,110 @@ def get_correlation_candidates(df, target_column):
     
     Returns:
     --------
-    list
-        List of tuples (column_name, correlation) sorted by absolute correlation
+    dict
+        Dictionary containing correlation information and recommendations
     """
-    # Only consider numeric columns
+    # Get numeric columns only
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    
-    # Remove target column from candidates
-    candidates = [col for col in numeric_cols if col != target_column]
+    if target_column not in numeric_cols:
+        return {
+            'error': 'Target column must be numeric for correlation analysis',
+            'correlations': [],
+            'recommendations': []
+        }
     
     # Calculate correlations
     correlations = []
-    for col in candidates:
-        correlation = df[[target_column, col]].corr().iloc[0, 1]
-        if not pd.isna(correlation):  # Only include if correlation can be calculated
-            correlations.append((col, abs(correlation)))
+    for col in numeric_cols:
+        if col != target_column:
+            correlation = df[[target_column, col]].corr().iloc[0, 1]
+            if not np.isnan(correlation):
+                correlations.append((col, abs(correlation)))
     
-    # Sort by absolute correlation value
+    # Sort by absolute correlation
     correlations.sort(key=lambda x: x[1], reverse=True)
     
-    return correlations
+    # Generate recommendations
+    strong_correlations = [c for c in correlations if c[1] >= 0.7]
+    moderate_correlations = [c for c in correlations if 0.5 <= c[1] < 0.7]
+    
+    recommendations = []
+    if strong_correlations:
+        recommendations.append(f"Strong correlations found with: {', '.join(c[0] for c in strong_correlations)}")
+        recommendations.append("These variables are excellent candidates for K-means clustering")
+    elif moderate_correlations:
+        recommendations.append(f"Moderate correlations found with: {', '.join(c[0] for c in moderate_correlations)}")
+        recommendations.append("These variables might be useful for K-means clustering")
+    else:
+        recommendations.append("No strong correlations found. Consider using simple imputation methods instead")
+    
+    return {
+        'correlations': correlations,
+        'recommendations': recommendations,
+        'best_candidates': [c[0] for c in strong_correlations] or [c[0] for c in moderate_correlations[:2]]
+    }
+
+def get_imputation_code(column, method='median', correlated_columns=None):
+    """Generate Python code for the imputation method used"""
+    code_snippets = {
+        'mean': f"# Mean imputation\ndf['{column}'] = df['{column}'].fillna(df['{column}'].mean())",
+        'median': f"# Median imputation\ndf['{column}'] = df['{column}'].fillna(df['{column}'].median())",
+        'remove': f"# Remove rows with missing values\ndf = df.dropna(subset=['{column}'])",
+    }
+    
+    if method == 'kmeans':
+        if correlated_columns:
+            cols_str = f"['{column}', '" + "', '".join(correlated_columns) + "']"
+            code = f"""# K-means imputation with correlated features
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+# Prepare data for clustering
+columns_to_use = {cols_str}
+data_for_clustering = df[columns_to_use].copy()
+missing_mask = data_for_clustering['{column}'].isna()
+clean_data = data_for_clustering[~missing_mask]
+
+# Standardize the data
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(clean_data)
+
+# Perform K-means clustering
+n_clusters = min(3, len(clean_data) // 2)
+kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+kmeans.fit(scaled_data)
+
+# Impute missing values using cluster centers
+for idx in df[missing_mask].index:
+    row_data = df.loc[idx, columns_to_use[1:]].values.reshape(1, -1)
+    if not np.isnan(row_data).any():
+        row_scaled = scaler.transform(row_data)
+        cluster = kmeans.predict(row_scaled)[0]
+        imputed_value = scaler.inverse_transform(kmeans.cluster_centers_)[cluster][0]
+        df.at[idx, '{column}'] = imputed_value"""
+        else:
+            code = f"""# Simple K-means imputation
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+# Prepare data
+data = df[['{column}']].copy()
+missing_mask = data['{column}'].isna()
+clean_data = data[~missing_mask]
+
+# Standardize and cluster
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(clean_data)
+kmeans = KMeans(n_clusters=3, random_state=42)
+kmeans.fit(scaled_data)
+
+# Impute with mean of cluster centers
+centers_unscaled = scaler.inverse_transform(kmeans.cluster_centers_)
+imputed_value = np.mean(centers_unscaled)
+df['{column}'] = df['{column}'].fillna(imputed_value)"""
+        return code
+    
+    return code_snippets.get(method, "# No code available for this method")
 
 def get_data_profile(df, original_df=None):
     """

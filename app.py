@@ -16,6 +16,16 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 from datetime import datetime
 import os
 
+# Import utility functions
+from utils.data_cleaning import (
+    handle_missing_values,
+    handle_outliers,
+    get_correlation_candidates,
+    get_imputation_code,
+    get_data_profile,
+    format_profile_for_display
+)
+
 # Northeastern University colors
 NU_RED = '#D41B2C'
 NU_BLACK = '#000000'
@@ -185,34 +195,55 @@ if page == 'Data Cleaning Lab':
                                 st.error("Please enter a valid value")
                     
                     elif method == "kmeans":
-                        n_clusters = st.slider("Select number of clusters:", 2, 10, 3)
-                        if st.button("Process Missing Values"):
-                            try:
-                                # Get numeric columns for clustering
-                                numeric_cols = new_data.select_dtypes(include=[np.number]).columns
-                                X = new_data[numeric_cols].copy()
-                                
-                                # Temporarily fill missing values with mean for scaling
-                                X = X.fillna(X.mean())
-                                
-                                # Scale the data
-                                scaler = StandardScaler()
-                                X_scaled = scaler.fit_transform(X)
-                                
-                                # Apply K-means
-                                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-                                clusters = kmeans.fit_predict(X_scaled)
-                                
-                                # For each cluster, fill missing values with cluster mean
-                                for cluster in range(n_clusters):
-                                    cluster_mean = new_data[selected_col][clusters == cluster].mean()
-                                    mask = (clusters == cluster) & (new_data[selected_col].isna())
-                                    new_data.loc[mask, selected_col] = cluster_mean
-                                
-                                st.session_state.cleaned_data = new_data
-                                st.success(f"Missing values in {selected_col} have been imputed using K-means clustering")
-                            except Exception as e:
-                                st.error(f"Error during K-means imputation: {str(e)}")
+                        # Get correlation candidates for better K-means clustering
+                        corr_info = get_correlation_candidates(current_data, selected_col)
+                        
+                        if 'error' in corr_info:
+                            st.warning(corr_info['error'])
+                        else:
+                            # Display recommendations
+                            st.subheader("K-means Clustering Recommendations")
+                            for rec in corr_info['recommendations']:
+                                st.info(rec)
+                            
+                            # Allow selection of correlated columns
+                            if corr_info['best_candidates']:
+                                correlated_cols = st.multiselect(
+                                    "Select correlated columns for K-means clustering:",
+                                    corr_info['best_candidates'],
+                                    default=corr_info['best_candidates'][:2]
+                                )
+                            else:
+                                correlated_cols = []
+                                st.warning("No strongly correlated columns found. K-means will use only the target column.")
+                            
+                            if st.button("Process Missing Values"):
+                                try:
+                                    with st.spinner("Applying K-means imputation..."):
+                                        # Process missing values
+                                        result = handle_missing_values(
+                                            current_data,
+                                            selected_col,
+                                            method="kmeans",
+                                            correlated_columns=correlated_cols
+                                        )
+                                        
+                                        # Update session state
+                                        st.session_state.cleaned_data = result
+                                        
+                                        # Show the code used
+                                        st.subheader("Python Code Used")
+                                        st.code(get_imputation_code(
+                                            selected_col,
+                                            method="kmeans",
+                                            correlated_columns=correlated_cols
+                                        ), language="python")
+                                        
+                                        # Show success message
+                                        st.success("Missing values processed successfully!")
+                                        
+                                except Exception as e:
+                                    st.error(f"Error during K-means imputation: {str(e)}")
                     
                     elif method == "drop":
                         if st.button("Process Missing Values"):
@@ -260,92 +291,103 @@ if page == 'Data Cleaning Lab':
             st.header("Outlier Detection and Treatment")
             
             # Select column for outlier detection
-            numeric_cols = st.session_state.cleaned_data.select_dtypes(include=[np.number]).columns
-            selected_col = st.selectbox(
-                "Select column for outlier detection:",
-                numeric_cols,
-                key='outlier_col'
-            )
+            numeric_cols = current_data.select_dtypes(include=[np.number]).columns.tolist()
+            # Exclude ID-like columns
+            numeric_cols = [col for col in numeric_cols if not (col.lower().endswith('id') or col.lower() == 'id')]
             
-            if selected_col:
-                # Calculate statistics
-                data = st.session_state.cleaned_data[selected_col]
-                mean = data.mean()
-                std = data.std()
-                
-                # Outlier threshold control
-                st.subheader("Set Outlier Threshold")
-                threshold = st.slider(
-                    "Standard deviation threshold:",
-                    min_value=1.0,
-                    max_value=5.0,
-                    value=3.0,
-                    step=0.1,
-                    help="Data points beyond this many standard deviations from the mean will be considered outliers"
-                )
-                
-                # Calculate bounds
-                lower_bound = mean - threshold * std
-                upper_bound = mean + threshold * std
-                
-                # Identify outliers
-                outliers = data[(data < lower_bound) | (data > upper_bound)]
-                
-                # Display statistics
-                col1, col2 = st.columns(2)
+            if len(numeric_cols) == 0:
+                st.warning("No numeric columns found in the dataset.")
+            else:
+                col1, col2 = st.columns([2, 1])
                 with col1:
-                    st.subheader("Statistics")
-                    stats_df = pd.DataFrame({
-                        'Metric': ['Mean', 'Std Dev', 'Lower Bound', 'Upper Bound'],
-                        'Value': [mean, std, lower_bound, upper_bound]
-                    })
-                    st.dataframe(stats_df.style.format({'Value': '{:.2f}'}))
+                    selected_col = st.selectbox(
+                        "Select column for outlier detection",
+                        numeric_cols,
+                        help="Choose a numeric column to check for outliers. ID columns are excluded."
+                    )
                 
                 with col2:
-                    st.subheader("Outlier Summary")
-                    st.write(f"Total outliers found: {len(outliers)}")
-                    st.write(f"Percentage of data: {(len(outliers)/len(data)*100):.2f}%")
+                    show_stats = st.checkbox("Show column statistics", value=True)
                 
-                # Visualization
-                fig = px.histogram(
-                    data,
-                    title=f"Distribution of {selected_col} with Outlier Bounds",
-                    labels={'value': selected_col, 'count': 'Frequency'}
-                )
-                fig.add_vline(x=lower_bound, line_dash="dash", line_color="red", name="Lower Bound")
-                fig.add_vline(x=upper_bound, line_dash="dash", line_color="red", name="Upper Bound")
-                st.plotly_chart(fig)
+                if show_stats and selected_col:
+                    stats = current_data[selected_col].describe()
+                    st.write("Column Statistics:")
+                    st.write({
+                        "Mean": f"{stats['mean']:.2f}",
+                        "Std Dev": f"{stats['std']:.2f}",
+                        "Min": f"{stats['min']:.2f}",
+                        "Max": f"{stats['max']:.2f}"
+                    })
                 
-                # Outlier treatment options
-                if len(outliers) > 0:
-                    st.subheader("Outlier Treatment")
-                    treatment = st.radio(
-                        "Select treatment method:",
-                        ["None", "Remove", "Cap", "Mean", "Median"],
-                        help="""
-                        - Remove: Delete rows with outliers
-                        - Cap: Cap values at the bounds
-                        - Mean: Replace outliers with mean
-                        - Median: Replace outliers with median
-                        """
+                # Outlier detection settings
+                col1, col2 = st.columns(2)
+                with col1:
+                    std_multiplier = st.slider(
+                        "Standard deviation threshold",
+                        min_value=1.0,
+                        max_value=5.0,
+                        value=2.0,
+                        step=0.1,
+                        help="Number of standard deviations to use for outlier detection"
                     )
+                
+                with col2:
+                    outlier_method = st.radio(
+                        "Outlier handling method",
+                        ["remove", "cap"],
+                        help="'remove' will delete outlier rows, 'cap' will limit them to the threshold"
+                    )
+                
+                # Process outliers
+                if st.button("Detect Outliers"):
+                    try:
+                        # Process outliers and get results
+                        results = handle_outliers(
+                            current_data,
+                            selected_col,
+                            std_multiplier=std_multiplier,
+                            method=outlier_method
+                        )
+                        
+                        # Display summary
+                        st.subheader("Outlier Summary")
+                        summary = results['summary']
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Rows", summary['total_rows'])
+                        with col2:
+                            st.metric("Outliers Found", summary['n_outliers'])
+                        with col3:
+                            st.metric("Outlier Percentage", f"{summary['outlier_percentage']:.2f}%")
+                        
+                        # Show thresholds
+                        st.write("Threshold Values:")
+                        st.write(f"Upper: {summary['threshold_upper']:.2f}")
+                        st.write(f"Lower: {summary['threshold_lower']:.2f}")
+                        
+                        # Show distribution plot
+                        fig = px.histogram(
+                            current_data,
+                            x=selected_col,
+                            title=f"Distribution of {selected_col} with Outlier Thresholds",
+                            nbins=30
+                        )
+                        fig.add_vline(x=summary['threshold_upper'], line_color="red", line_dash="dash", annotation_text="Upper Threshold")
+                        fig.add_vline(x=summary['threshold_lower'], line_color="red", line_dash="dash", annotation_text="Lower Threshold")
+                        st.plotly_chart(fig)
+                        
+                        # Show the code used
+                        st.subheader("Python Code Used")
+                        st.code(results['code'], language="python")
+                        
+                        # Add button to apply changes
+                        if st.button("Apply Outlier Treatment"):
+                            st.session_state.cleaned_data = results['df']
+                            st.success(f"Successfully handled {summary['n_outliers']} outliers in {selected_col}")
+                            st.experimental_rerun()
                     
-                    if treatment != "None" and st.button("Apply Treatment"):
-                        temp_data = st.session_state.cleaned_data.copy()
-                        
-                        if treatment == "Remove":
-                            temp_data = temp_data[~temp_data[selected_col].isin(outliers)]
-                        elif treatment == "Cap":
-                            temp_data.loc[temp_data[selected_col] < lower_bound, selected_col] = lower_bound
-                            temp_data.loc[temp_data[selected_col] > upper_bound, selected_col] = upper_bound
-                        elif treatment == "Mean":
-                            temp_data.loc[temp_data[selected_col].isin(outliers), selected_col] = mean
-                        elif treatment == "Median":
-                            temp_data.loc[temp_data[selected_col].isin(outliers), selected_col] = data.median()
-                        
-                        st.session_state.cleaned_data = temp_data
-                        st.success(f"Applied {treatment} treatment to outliers in {selected_col}")
-                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"Error processing outliers: {str(e)}")
         
         with clean_tab3:
             st.subheader("Handle Duplicates")
@@ -353,12 +395,12 @@ if page == 'Data Cleaning Lab':
             # Duplicate detection settings
             duplicate_subset = st.multiselect(
                 "Select columns to check for duplicates",
-                st.session_state.data.columns.tolist(),  
-                default=st.session_state.data.columns.tolist()  
+                current_data.columns.tolist(),  
+                default=current_data.columns.tolist()  
             )
             
             # Duplicate detection
-            duplicates = st.session_state.data.duplicated(subset=duplicate_subset, keep=False)
+            duplicates = current_data.duplicated(subset=duplicate_subset, keep=False)
             
             # Display duplicate statistics
             st.write(f"Total duplicates found: {duplicates.sum()}")
@@ -385,7 +427,7 @@ if page == 'Data Cleaning Lab':
             st.subheader("Data Type Conversion")
             
             # Column selection
-            selected_col = st.selectbox('Choose column', st.session_state.data.columns)
+            selected_col = st.selectbox('Choose column', current_data.columns)
             
             # Data type conversion options
             conversion_options = {
@@ -394,7 +436,7 @@ if page == 'Data Cleaning Lab':
                 'object': 'String',
                 'category': 'Category'
             }
-            current_type = st.session_state.data[selected_col].dtype
+            current_type = current_data[selected_col].dtype
             available_types = [t for t in conversion_options if t != current_type.name]
             
             if available_types:
