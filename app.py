@@ -166,51 +166,6 @@ if page == 'Data Cleaning Lab':
         # Get current data
         current_data = st.session_state.cleaned_data if st.session_state.cleaned_data is not None else st.session_state.data
         
-        # Add Reference Guide section
-        with st.expander("▲ Reference Guide", expanded=True):
-            st.subheader("Data Cleaning Guide")
-            try:
-                from pptx import Presentation
-                import os
-                
-                # Load embedded presentation
-                DECK_PATH = os.path.join("docs", "cleaning_guide.pptx")
-                if not os.path.exists(DECK_PATH):
-                    st.error(f"Could not find presentation at {DECK_PATH}")
-                else:
-                    prs = Presentation(DECK_PATH)
-                    
-                    # Navigation controls
-                    if 'slide_page' not in st.session_state:
-                        st.session_state.slide_page = 0
-                    
-                    col1, col2, col3 = st.columns([1,3,1])
-                    with col1:
-                        if st.button("← Previous"):
-                            if st.session_state.slide_page > 0:
-                                st.session_state.slide_page -= 1
-                    with col2:
-                        st.markdown(f"**Slide {st.session_state.slide_page + 1} of {len(prs.slides)}**")
-                    with col3:
-                        if st.button("Next →"):
-                            if st.session_state.slide_page < len(prs.slides)-1:
-                                st.session_state.slide_page += 1
-                    
-                    # Display current slide content
-                    slide = prs.slides[st.session_state.slide_page]
-                    content = []
-                    
-                    for shape in slide.shapes:
-                        if hasattr(shape, "text") and shape.text.strip():
-                            content.append(shape.text.strip())
-                    
-                    st.markdown("---")
-                    for text in content:
-                        st.markdown(text)
-                
-            except Exception as e:
-                st.error(f"Error loading slide deck: {str(e)}")
-        
         # Tabs for different cleaning operations
         clean_tab1, clean_tab2, clean_tab3, clean_tab4, clean_tab5 = st.tabs([
             "Missing Values", "Outliers", "Duplicates", "Data Type Conversion", "Data Profile"
