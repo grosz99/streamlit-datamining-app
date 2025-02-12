@@ -45,7 +45,7 @@ custom_template = {
 
 # Set page configuration
 st.set_page_config(
-    page_title="Data Mining App",
+    page_title="6040 Data Mining Lab",
     page_icon="📊",
     layout="wide"
 )
@@ -72,45 +72,8 @@ def update_cleaned_data(df):
         st.session_state.original_data = st.session_state.data.copy()
     st.session_state.cleaned_data = df.copy()
 
-# Data loading and preprocessing
-if 'data' not in st.session_state:
-    try:
-        # Load sample data
-        data = pd.read_csv('sample_data.csv')
-        
-        # Convert date column to datetime if it exists
-        if 'Date' in data.columns:
-            data['Date'] = pd.to_datetime(data['Date'])
-        
-        # Convert categorical columns
-        categorical_cols = ['Show', 'Gender', 'Day']
-        for col in categorical_cols:
-            if col in data.columns:
-                data[col] = data[col].astype('category')
-        
-        # Convert binary columns
-        binary_cols = ['Completed']
-        for col in binary_cols:
-            if col in data.columns:
-                data[col] = data[col].astype(int)
-        
-        st.session_state.data = data
-        st.session_state.cleaned_data = data.copy()
-        
-        # Show dataset info
-        st.success("Netflix viewing dataset loaded successfully!")
-        st.write("Dataset Overview:")
-        st.write({
-            'Total Records': len(data),
-            'Numeric Columns': list(data.select_dtypes(include=[np.number]).columns),
-            'Categorical Columns': list(data.select_dtypes(include=['category']).columns),
-            'Date Columns': [col for col in data.columns if pd.api.types.is_datetime64_any_dtype(data[col])]
-        })
-    except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
-
 # Title and description
-st.title('Data Mining Application')
+st.title('6040 Data Mining Lab')
 st.markdown("""
 This application helps you explore, clean, and analyze your data using various data mining techniques.
 Choose your operation from the sidebar and follow the instructions.
@@ -119,10 +82,10 @@ Choose your operation from the sidebar and follow the instructions.
 # Sidebar navigation
 st.sidebar.title('Navigation')
 page = st.sidebar.radio('Select a page:', [
-    'Data Cleaning Lab',
-    'Data Exploration Lab',
+    'Data Cleaning Module',
+    'Data Exploration Module',
     'Prediction Models',
-    'Data Optimization Lab',
+    'Data Optimization Module',
     'Story Dashboard'
 ])
 
@@ -157,10 +120,10 @@ if dataset_option == "Upload Your Own Dataset":
         except Exception as e:
             st.sidebar.error(f'Error: {str(e)}')
 
-if page == 'Data Cleaning Lab':
-    st.title('Data Cleaning Lab')
+if page == 'Data Cleaning Module':
+    st.header('Data Cleaning Module')
     
-    if st.session_state.data is None:
+    if 'data' not in st.session_state:
         st.error("Please upload a dataset first!")
     else:
         # Get current data
@@ -348,14 +311,26 @@ if page == 'Data Cleaning Lab':
                     show_stats = st.checkbox("Show column statistics", value=True)
                 
                 if show_stats and selected_col:
-                    stats = current_data[selected_col].describe()
-                    st.write("Column Statistics:")
-                    st.write({
-                        "Mean": f"{stats['mean']:.2f}",
-                        "Std Dev": f"{stats['std']:.2f}",
-                        "Min": f"{stats['min']:.2f}",
-                        "Max": f"{stats['max']:.2f}"
+                    stats_df = pd.DataFrame({
+                        'Statistic': ['Mean', 'Standard Deviation', 'Minimum', 'Maximum'],
+                        'Value': [
+                            f"{current_data[selected_col].mean():.2f}",
+                            f"{current_data[selected_col].std():.2f}",
+                            f"{current_data[selected_col].min():.2f}",
+                            f"{current_data[selected_col].max():.2f}"
+                        ]
                     })
+                    st.write("### Column Statistics")
+                    st.dataframe(
+                        stats_df.set_index('Statistic'),
+                        column_config={
+                            "Value": st.column_config.NumberColumn(
+                                "Value",
+                                help="Statistical values for the selected column",
+                                format="%.2f"
+                            )
+                        }
+                    )
                 
                 # Outlier detection settings
                 col1, col2 = st.columns(2)
@@ -545,8 +520,8 @@ if page == 'Data Cleaning Lab':
             else:
                 st.info("No cleaning operations have been performed yet. The cleaned dataset will appear here after you apply some cleaning operations.")
 
-elif page == 'Data Exploration Lab':
-    st.title('Data Exploration Lab')
+elif page == 'Data Exploration Module':
+    st.title('Data Exploration Module')
     
     if st.session_state.data is None:
         st.error("Please upload a dataset first!")
@@ -852,11 +827,11 @@ elif page == 'Data Exploration Lab':
                 st.error(f"Error creating visualization: {str(e)}")
 
 elif page == "Prediction Models":
-    st.title("Prediction Models Lab")
+    st.title("Prediction Models")
     st.write("Build and evaluate Linear or Logistic Regression models.")
     
     if 'data' not in st.session_state:
-        st.error("Please upload a dataset in the Data Cleaning Lab first.")
+        st.error("Please upload a dataset in the Data Cleaning Module first.")
     else:
         # Get current data
         current_data = (st.session_state['cleaned_data'] 
@@ -927,8 +902,8 @@ elif page == "Prediction Models":
                             except Exception as e:
                                 st.error(f"An error occurred while training the model: {str(e)}")
 
-elif page == "Data Optimization Lab":
-    st.title("Data Optimization Lab")
+elif page == "Data Optimization Module":
+    st.title("Data Optimization Module")
     
     if st.session_state.data is None:
         st.error("Please upload a dataset first!")
@@ -1110,4 +1085,4 @@ elif page == "Story Dashboard":
                     
                     st.markdown("---")  # Add separator between components
     else:
-        st.info("Your data story will appear here. Pin visualizations and insights from the Data Exploration Lab to build your story!")
+        st.info("Your data story will appear here. Pin visualizations and insights from the Data Exploration Module to build your story!")
