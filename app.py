@@ -214,9 +214,8 @@ if page == 'Data Cleaning Lab':
                         "mean": "**Mean Imputation**: Replaces missing values with the average of non-missing values. Best for normally distributed numerical data with no significant outliers.",
                         "median": "**Median Imputation**: Replaces missing values with the median. Better than mean when data is skewed or contains outliers.",
                         "mode": "**Mode Imputation**: Replaces missing values with the most frequent value. Suitable for categorical data or discrete numerical values.",
-                        "constant": "**Constant Value**: Replaces missing values with a specified constant. Useful when missing values have a specific meaning or when you want to flag them.",
-                        "kmeans": "**K-Means Imputation**: Uses K-means clustering to estimate missing values. Good for data with strong relationships between features but computationally intensive.",
-                        "drop": "**Drop Records**: Removes rows with missing values. Only use if missing data is random and you can afford to lose observations."
+                        "kmeans": "**K-Means Imputation**: Uses K-means clustering to estimate missing values. Good for data with strong relationships between features.",
+                        "remove": "**Drop Records**: Removes rows with missing values. Only use if missing data is random and you can afford to lose observations."
                     }
                     
                     method = st.selectbox("Select imputation method", list(method_descriptions.keys()))
@@ -224,31 +223,61 @@ if page == 'Data Cleaning Lab':
                     # Display method description
                     st.markdown(method_descriptions[method])
                     
-                    # Show code for the selected method
-                    st.subheader("Python Implementation")
-                    st.write("Here's how to implement this cleaning method:")
-                    
-                    # Get correlated columns for k-means if needed
-                    if method == 'kmeans':
-                        corr_info = get_correlation_candidates(current_data, selected_col)
-                        if not corr_info.get('error'):
-                            correlated_cols = corr_info['best_candidates'][:2] if corr_info['best_candidates'] else []
+                    if method == 'kmeans' and pd.api.types.is_numeric_dtype(current_data[selected_col]):
+                        st.write("### Correlation Analysis")
+                        # Get numeric columns for correlation
+                        numeric_cols = current_data.select_dtypes(include=['int64', 'float64']).columns
+                        if len(numeric_cols) > 1:  # Need at least 2 columns for correlation
+                            # Calculate correlation matrix for numeric columns
+                            corr_matrix = current_data[numeric_cols].corr()
+                            
+                            # Find correlations with selected column
+                            correlations = corr_matrix[selected_col].sort_values(ascending=False)
+                            # Remove self-correlation
+                            correlations = correlations[correlations.index != selected_col]
+                            
+                            st.write("Correlations with selected column:")
+                            for col, corr in correlations.items():
+                                st.write(f"- {col}: {corr:.3f}")
+                            
+                            # Let user select correlated features for k-means
+                            st.write("### Select Features for K-means")
+                            st.write("Choose columns that have strong correlations to use in k-means imputation:")
+                            
+                            # Allow multiple selection of correlated features
+                            selected_features = st.multiselect(
+                                "Select features to use (recommended to choose highly correlated features)",
+                                options=correlations.index.tolist(),
+                                default=correlations.index[:2].tolist() if len(correlations) >= 2 else correlations.index.tolist(),
+                                help="Select features that have strong correlations with the column you're trying to impute"
+                            )
+                            
+                            if len(selected_features) > 0:
+                                n_clusters = st.slider("Number of clusters", min_value=2, max_value=10, value=3)
+                                correlated_cols = selected_features
+                            else:
+                                st.warning("Please select at least one feature for k-means imputation")
+                                correlated_cols = []
                         else:
+                            st.warning("Need at least 2 numeric columns for correlation analysis")
                             correlated_cols = []
                     else:
                         correlated_cols = None
+                        n_clusters = 3
                     
-                    # Get and display the code
-                    try:
-                        method_code = get_imputation_code(
-                            selected_col,
-                            method=method,
-                            correlated_columns=correlated_cols
-                        )
-                        st.code(method_code, language="python")
-                    except Exception as e:
-                        st.error(f"Error generating code example: {str(e)}")
-                        
+                    # Show code for the selected method
+                    if st.checkbox("Show code"):
+                        try:
+                            code = get_imputation_code(
+                                selected_col,
+                                method=method,
+                                features=correlated_cols,
+                                n_clusters=n_clusters
+                            )
+                            st.code(code, language="python")
+                        except Exception as e:
+                            st.error(f"Error generating code example: {str(e)}")
+                    
                     # Process the data
                     if st.button("Process Missing Values"):
                         try:
@@ -257,7 +286,8 @@ if page == 'Data Cleaning Lab':
                                     current_data,
                                     selected_col,
                                     method=method,
-                                    correlated_columns=correlated_cols
+                                    correlated_columns=correlated_cols,
+                                    n_clusters=n_clusters
                                 )
                                 
                                 # Update session state
@@ -292,7 +322,6 @@ if page == 'Data Cleaning Lab':
                                         st.plotly_chart(fig2)
                                     else:
                                         st.write(result[selected_col].value_counts())
-                                
                         except Exception as e:
                             st.error(f"Error processing missing values: {str(e)}")
         
