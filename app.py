@@ -743,21 +743,68 @@ elif page == 'Data Exploration Module':
                     )
                 
                 elif viz_type == "Bar Chart":
-                    if agg_func == "count":
-                        fig = px.histogram(
-                            current_data,
-                            x=x_col,
-                            color=None if color_col == "None" else color_col,
-                            title=f"Count of {x_col}"
-                        )
+                    # Get numeric and categorical columns
+                    numeric_cols = current_data.select_dtypes(include=['int64', 'float64']).columns
+                    categorical_cols = current_data.select_dtypes(include=['object', 'category']).columns
+                    
+                    if len(categorical_cols) == 0:
+                        st.warning("No categorical columns available for bar chart")
                     else:
-                        grouped_data = current_data.groupby(x_col)[y_col].agg(agg_func).reset_index()
-                        fig = px.bar(
-                            grouped_data,
-                            x=x_col,
-                            y=y_col,
-                            title=f"{agg_func.capitalize()} of {y_col} by {x_col}"
+                        x_col = st.selectbox("X-axis (Categorical)", categorical_cols)
+                        y_col = st.selectbox("Y-axis (Numeric)", numeric_cols)
+                        color_col = st.selectbox("Color by", ["None"] + list(categorical_cols))
+                        agg_func = st.selectbox(
+                            "Aggregation function",
+                            ["mean", "sum", "count"],
+                            help="How to aggregate the numeric values for each category"
                         )
+
+                        if x_col and y_col:
+                            try:
+                                # Create bar chart
+                                if agg_func == "count":
+                                    fig = px.histogram(
+                                        current_data,
+                                        x=x_col,
+                                        color=None if color_col == "None" else color_col,
+                                        title=f"Count of {x_col}"
+                                    )
+                                else:
+                                    grouped_data = current_data.groupby(x_col)[y_col].agg(agg_func).reset_index()
+                                    fig = px.bar(
+                                        grouped_data,
+                                        x=x_col,
+                                        y=y_col,
+                                        color=None if color_col == "None" else color_col,
+                                        title=f"{agg_func.capitalize()} of {y_col} by {x_col}"
+                                    )
+
+                                # Customize layout
+                                fig.update_layout(
+                                    xaxis_title=x_col,
+                                    yaxis_title=f"{agg_func.capitalize()} of {y_col}",
+                                    showlegend=True if color_col != "None" else False
+                                )
+
+                                # Show plot
+                                st.plotly_chart(fig)
+
+                                # Add to pinned visualizations if requested
+                                if st.button("Pin this visualization"):
+                                    visualization = {
+                                        'type': 'bar',
+                                        'settings': {
+                                            'x_col': x_col,
+                                            'y_col': y_col,
+                                            'color_col': color_col,
+                                            'agg_func': agg_func
+                                        },
+                                        'title': f"Bar Chart: {agg_func.capitalize()} of {y_col} by {x_col}"
+                                    }
+                                    st.session_state.pinned_visualizations.append(visualization)
+                                    st.success("Visualization pinned!")
+                            except Exception as e:
+                                st.error(f"Error creating bar chart: {str(e)}")
                 
                 elif viz_type == "Histogram":
                     fig = px.histogram(
