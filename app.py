@@ -80,17 +80,18 @@ Choose your operation from the sidebar and follow the instructions.
 """)
 
 # Sidebar navigation
-st.sidebar.title('Navigation')
+st.sidebar.markdown('### Navigation')
 page = st.sidebar.radio('Select a page:', [
     'Data Cleaning Module',
     'Data Exploration Module',
-    'Prediction Models',
+    'Regression Models',     # Switched order
+    'Classification Models', # Switched order
     'Data Optimization Module',
     'Story Dashboard'
 ])
 
 # Data Input section in sidebar
-st.sidebar.header('Data Input')
+st.sidebar.markdown('### Data Input')
 dataset_option = st.sidebar.radio(
     "Select data source",
     ["Use Sample Dataset", "Upload Your Own Dataset"]
@@ -121,7 +122,7 @@ if dataset_option == "Upload Your Own Dataset":
             st.sidebar.error(f'Error: {str(e)}')
 
 if page == 'Data Cleaning Module':
-    st.header('Data Cleaning Module')
+    st.markdown('### Data Cleaning Module')
     
     if 'data' not in st.session_state:
         st.error("Please upload a dataset first!")
@@ -136,7 +137,7 @@ if page == 'Data Cleaning Module':
         
         # Tab 1: Missing Values
         with clean_tab1:
-            st.subheader("Handle Missing Values")
+            st.markdown("#### Handle Missing Values")
             
             # Display missing value information
             missing_info = current_data.isnull().sum()
@@ -521,7 +522,7 @@ if page == 'Data Cleaning Module':
                 st.info("No cleaning operations have been performed yet. The cleaned dataset will appear here after you apply some cleaning operations.")
 
 elif page == 'Data Exploration Module':
-    st.title('Data Exploration Module')
+    st.markdown('### Data Exploration Module')
     
     if st.session_state.data is None:
         st.error("Please upload a dataset first!")
@@ -873,81 +874,307 @@ elif page == 'Data Exploration Module':
             except Exception as e:
                 st.error(f"Error creating visualization: {str(e)}")
 
-elif page == "Prediction Models":
-    st.title("Prediction Models")
-    st.write("Build and evaluate Linear or Logistic Regression models.")
+elif page == "Classification Models":
+    st.title("6040 Data Mining Lab")
+    st.markdown("### Classification Models")
     
     if 'data' not in st.session_state:
-        st.error("Please upload a dataset in the Data Cleaning Module first.")
+        st.error("Please upload a dataset first!")
     else:
         # Get current data
-        current_data = (st.session_state['cleaned_data'] 
-                       if 'cleaned_data' in st.session_state 
-                       else st.session_state['data'])
+        current_data = st.session_state.cleaned_data if st.session_state.cleaned_data is not None else st.session_state.data
         
-        # Add Data Profile section
-        with st.expander("View Data Profile", expanded=True):
-            profile = current_data.describe()
-            st.dataframe(profile)
+        if 'prediction_data' not in st.session_state:
+            st.session_state.prediction_data = current_data.copy()
         
-        st.divider()
+        # Feature selection
+        st.markdown("#### Data Selection")
+        numeric_cols = current_data.select_dtypes(include=['int64', 'float64']).columns.tolist()
         
-        # Select target variable
-        numeric_cols = current_data.select_dtypes(include=[np.number]).columns
-        target_col = st.selectbox(
-            "Select the variable you want to predict (target variable):",
-            numeric_cols
-        )
-        
-        if target_col:
-            # Get model recommendation
-            recommendation = "Linear Regression"
+        if len(numeric_cols) < 2:
+            st.error("Need at least 2 numeric columns for modeling!")
+        else:
+            X_cols = st.multiselect("Select features (X)", numeric_cols)
+            remaining_cols = [col for col in numeric_cols if col not in X_cols]
+            y_col = st.selectbox("Select target variable (y)", remaining_cols if remaining_cols else numeric_cols)
             
-            st.subheader("Model Recommendation")
-            st.write(recommendation)
+            if X_cols and y_col:
+                # Analyze target variable
+                target_data = current_data[y_col]
+                unique_values = target_data.nunique()
+                
+                if unique_values > 10:
+                    st.error("Target variable has too many unique values for classification. Please use regression instead.")
+                else:
+                    st.info(f"Target variable '{y_col}' has {unique_values} unique values: {sorted(target_data.unique())}")
+                    
+                    # Handle missing values
+                    selected_cols = X_cols + [y_col]
+                    has_missing = current_data[selected_cols].isnull().any().any()
+                    
+                    if has_missing:
+                        st.warning("Missing values detected in selected columns!")
+                        st.markdown("#### Missing Value Handling")
+                        nan_handling = st.radio(
+                            "Handle missing values by:",
+                            options=["Using previously cleaned data", "Automatic imputation", 
+                                    "Remove rows with missing values", "Use NaN-compatible models"]
+                        )
+                        
+                        if nan_handling == "Automatic imputation":
+                            impute_method = st.selectbox(
+                                "Select imputation method:",
+                                ["mean", "median", "most_frequent"]
+                            )
+                            from sklearn.impute import SimpleImputer
+                            imputer = SimpleImputer(strategy=impute_method)
+                            st.session_state.prediction_data[selected_cols] = pd.DataFrame(
+                                imputer.fit_transform(st.session_state.prediction_data[selected_cols]),
+                                columns=selected_cols,
+                                index=st.session_state.prediction_data.index
+                            )
+                            st.success(f"Applied {impute_method} imputation to selected columns")
+                        
+                        elif nan_handling == "Remove rows with missing values":
+                            initial_count = len(st.session_state.prediction_data)
+                            st.session_state.prediction_data = st.session_state.prediction_data.dropna(subset=selected_cols)
+                            new_count = len(st.session_state.prediction_data)
+                            st.success(f"Removed {initial_count - new_count} rows with missing values")
+                    
+                    # Model Selection
+                    st.markdown("#### Model Configuration")
+                    model_type = st.selectbox(
+                        "Select classifier",
+                        ["Logistic Regression", "Decision Tree", "HistGradientBoosting"]
+                    )
+                    
+                    # Model specific parameters
+                    if model_type == "Decision Tree":
+                        max_depth = st.slider("Max depth", 1, 20, 3)
+                        criterion = st.selectbox("Splitting criterion", ["gini", "entropy"])
+                        min_samples_split = st.number_input("Minimum samples split", 2, 20, 2)
+                    
+                    # Train-test split
+                    test_size = st.slider("Test set size (%)", 10, 40, 20)
+                    
+                    if st.button("Train Classifier"):
+                        try:
+                            # Prepare data
+                            X = st.session_state.prediction_data[X_cols]
+                            y = st.session_state.prediction_data[y_col]
+                            
+                            # Convert target to categorical if it's numeric
+                            if pd.api.types.is_numeric_dtype(y):
+                                y = y.astype(str)
+                            
+                            # Encode target
+                            from sklearn.preprocessing import LabelEncoder
+                            le = LabelEncoder()
+                            y = le.fit_transform(y)
+                            st.info(f"Encoded target classes: {dict(enumerate(le.classes_))}")
+                            
+                            # Split data
+                            from sklearn.model_selection import train_test_split
+                            X_train, X_test, y_train, y_test = train_test_split(
+                                X, y, test_size=test_size/100, random_state=42
+                            )
+                            
+                            # Initialize model
+                            if model_type == "Logistic Regression":
+                                from sklearn.linear_model import LogisticRegression
+                                model = LogisticRegression(max_iter=1000)
+                            elif model_type == "Decision Tree":
+                                from sklearn.tree import DecisionTreeClassifier
+                                model = DecisionTreeClassifier(
+                                    max_depth=max_depth,
+                                    criterion=criterion,
+                                    min_samples_split=min_samples_split
+                                )
+                            else:  # HistGradientBoosting
+                                from sklearn.ensemble import HistGradientBoostingClassifier
+                                model = HistGradientBoostingClassifier()
+                            
+                            # Train and predict
+                            model.fit(X_train, y_train)
+                            y_pred = model.predict(X_test)
+                            
+                            # Calculate metrics
+                            st.markdown("#### Model Performance")
+                            from sklearn.metrics import accuracy_score, classification_report
+                            accuracy = accuracy_score(y_test, y_pred)
+                            st.write(f"Accuracy: {accuracy:.2f}")
+                            
+                            # Convert back to original labels
+                            y_test_original = le.inverse_transform(y_test)
+                            y_pred_original = le.inverse_transform(y_pred)
+                            
+                            # Classification report
+                            report = classification_report(y_test_original, y_pred_original)
+                            st.text("Classification Report:")
+                            st.text(report)
+                            
+                            # Feature importance for Decision Tree
+                            if model_type == "Decision Tree":
+                                st.markdown("#### Feature Importance")
+                                importance_df = pd.DataFrame({
+                                    'Feature': X_cols,
+                                    'Importance': model.feature_importances_
+                                }).sort_values('Importance', ascending=False)
+                                st.bar_chart(importance_df.set_index('Feature'))
+                            
+                            # Coefficients for Logistic Regression
+                            elif model_type == "Logistic Regression":
+                                st.markdown("#### Model Coefficients")
+                                coef_df = pd.DataFrame({
+                                    'Feature': X_cols,
+                                    'Coefficient': model.coef_[0]
+                                }).sort_values('Coefficient', ascending=False)
+                                st.bar_chart(coef_df.set_index('Feature'))
+                                
+                        except Exception as e:
+                            st.error(f"An error occurred while training the classifier: {str(e)}")
+
+elif page == "Regression Models":
+    st.title("6040 Data Mining Lab")
+    st.markdown("### Regression Models")
+    
+    if 'data' not in st.session_state:
+        st.error("Please upload a dataset first!")
+    else:
+        # Get current data
+        current_data = st.session_state.cleaned_data if st.session_state.cleaned_data is not None else st.session_state.data
+        
+        if 'prediction_data' not in st.session_state:
+            st.session_state.prediction_data = current_data.copy()
+        
+        # Feature selection
+        st.markdown("#### Data Selection")
+        numeric_cols = current_data.select_dtypes(include=['int64', 'float64']).columns.tolist()
+        
+        if len(numeric_cols) < 2:
+            st.error("Need at least 2 numeric columns for modeling!")
+        else:
+            X_cols = st.multiselect("Select features (X)", numeric_cols)
+            remaining_cols = [col for col in numeric_cols if col not in X_cols]
+            y_col = st.selectbox("Select target variable (y)", remaining_cols if remaining_cols else numeric_cols)
             
-            if recommendation != 'none':
-                # Select features
-                feature_cols = st.multiselect(
-                    "Select the variables to use as features:",
-                    [col for col in current_data.columns if col != target_col],
-                    help="Choose the variables that you think will help predict your target variable."
+            if X_cols and y_col:
+                # Analyze target variable
+                target_data = current_data[y_col]
+                unique_values = target_data.nunique()
+                
+                if unique_values <= 10:
+                    st.warning("Target variable has few unique values. Consider using classification instead.")
+                
+                # Handle missing values
+                selected_cols = X_cols + [y_col]
+                has_missing = current_data[selected_cols].isnull().any().any()
+                
+                if has_missing:
+                    st.warning("Missing values detected in selected columns!")
+                    st.markdown("#### Missing Value Handling")
+                    nan_handling = st.radio(
+                        "Handle missing values by:",
+                        options=["Using previously cleaned data", "Automatic imputation", 
+                                "Remove rows with missing values", "Use NaN-compatible models"]
+                    )
+                    
+                    if nan_handling == "Automatic imputation":
+                        impute_method = st.selectbox(
+                            "Select imputation method:",
+                            ["mean", "median", "most_frequent"]
+                        )
+                        from sklearn.impute import SimpleImputer
+                        imputer = SimpleImputer(strategy=impute_method)
+                        st.session_state.prediction_data[selected_cols] = pd.DataFrame(
+                            imputer.fit_transform(st.session_state.prediction_data[selected_cols]),
+                            columns=selected_cols,
+                            index=st.session_state.prediction_data.index
+                        )
+                        st.success(f"Applied {impute_method} imputation to selected columns")
+                    
+                    elif nan_handling == "Remove rows with missing values":
+                        initial_count = len(st.session_state.prediction_data)
+                        st.session_state.prediction_data = st.session_state.prediction_data.dropna(subset=selected_cols)
+                        new_count = len(st.session_state.prediction_data)
+                        st.success(f"Removed {initial_count - new_count} rows with missing values")
+                
+                # Model Selection
+                st.markdown("#### Model Configuration")
+                model_type = st.selectbox(
+                    "Select regressor",
+                    ["Linear Regression", "Decision Tree", "HistGradientBoosting"]
                 )
                 
-                if feature_cols:
-                    # Train model button
-                    if st.button("Train Model"):
-                        with st.spinner("Training model..."):
-                            try:
-                                # Prepare data
-                                data = {
-                                    'X': current_data[feature_cols],
-                                    'y': current_data[target_col]
-                                }
-                                
-                                # Train and evaluate model
-                                model = LinearRegression()
-                                model.fit(data['X'], data['y'])
-                                y_pred = model.predict(data['X'])
-                                
-                                # Display results
-                                st.subheader("Model Performance")
-                                metrics = {
-                                    'R-squared': r2_score(data['y'], y_pred),
-                                    'Mean Squared Error': mean_squared_error(data['y'], y_pred)
-                                }
-                                st.dataframe(pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value']))
-                                
-                                # Display coefficients in a formatted table
-                                st.write("\nModel Coefficients:")
-                                coef_df = pd.DataFrame({
-                                    'Feature': feature_cols,
-                                    'Coefficient': model.coef_
-                                })
-                                st.dataframe(coef_df)
+                # Model specific parameters
+                if model_type == "Decision Tree":
+                    max_depth = st.slider("Max depth", 1, 20, 3)
+                    criterion = st.selectbox("Splitting criterion", ["squared_error", "friedman_mse"])
+                    min_samples_split = st.number_input("Minimum samples split", 2, 20, 2)
+                
+                # Train-test split
+                test_size = st.slider("Test set size (%)", 10, 40, 20)
+                
+                if st.button("Train Regressor"):
+                    try:
+                        # Prepare data
+                        X = st.session_state.prediction_data[X_cols]
+                        y = st.session_state.prediction_data[y_col]
+                        
+                        # Split data
+                        from sklearn.model_selection import train_test_split
+                        X_train, X_test, y_train, y_test = train_test_split(
+                            X, y, test_size=test_size/100, random_state=42
+                        )
+                        
+                        # Initialize model
+                        if model_type == "Linear Regression":
+                            from sklearn.linear_model import LinearRegression
+                            model = LinearRegression()
+                        elif model_type == "Decision Tree":
+                            from sklearn.tree import DecisionTreeRegressor
+                            model = DecisionTreeRegressor(
+                                max_depth=max_depth,
+                                criterion=criterion,
+                                min_samples_split=min_samples_split
+                            )
+                        else:  # HistGradientBoosting
+                            from sklearn.ensemble import HistGradientBoostingRegressor
+                            model = HistGradientBoostingRegressor()
+                        
+                        # Train and predict
+                        model.fit(X_train, y_train)
+                        y_pred = model.predict(X_test)
+                        
+                        # Calculate metrics
+                        st.markdown("#### Model Performance")
+                        from sklearn.metrics import r2_score, mean_squared_error
+                        r2 = r2_score(y_test, y_pred)
+                        mse = mean_squared_error(y_test, y_pred)
+                        st.write(f"R² Score: {r2:.2f}")
+                        st.write(f"Mean Squared Error: {mse:.2f}")
+                        st.write(f"Root Mean Squared Error: {np.sqrt(mse):.2f}")
+                        
+                        # Feature importance for Decision Tree
+                        if model_type == "Decision Tree":
+                            st.markdown("#### Feature Importance")
+                            importance_df = pd.DataFrame({
+                                'Feature': X_cols,
+                                'Importance': model.feature_importances_
+                            }).sort_values('Importance', ascending=False)
+                            st.bar_chart(importance_df.set_index('Feature'))
+                        
+                        # Coefficients for Linear Regression
+                        elif model_type == "Linear Regression":
+                            st.markdown("#### Model Coefficients")
+                            coef_df = pd.DataFrame({
+                                'Feature': X_cols,
+                                'Coefficient': model.coef_
+                            }).sort_values('Coefficient', ascending=False)
+                            st.bar_chart(coef_df.set_index('Feature'))
                             
-                            except Exception as e:
-                                st.error(f"An error occurred while training the model: {str(e)}")
+                    except Exception as e:
+                        st.error(f"An error occurred while training the regressor: {str(e)}")
 
 elif page == "Data Optimization Module":
     st.title("Data Optimization Module")
@@ -990,7 +1217,10 @@ elif page == "Data Optimization Module":
                         
                         # Handle missing values if any
                         if X.isnull().any().any():
-                            st.warning("⚠️ Dataset contains missing values. They will be filled with median values.")
+                            st.warning("⚠️ Dataset contains missing values. They will be handled automatically.")
+                            # Replace infinities with NaN
+                            X = X.replace([np.inf, -np.inf], np.nan)
+                            # Fill missing values with median
                             X = X.fillna(X.median())
                         
                         # Scale the data
